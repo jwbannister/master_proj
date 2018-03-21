@@ -68,7 +68,8 @@ mp_name = "Master_proj_20180205.xlsm"
 input_file = pd.ExcelFile(file_path + npv_name)
 # what years are MP steps to be implemented?
 step_years = input_file.parse(sheet_name="Script Input", header=0, \
-        usecols="A,B").dropna(how='any')
+        usecols="A,B", converters={'year':int}).dropna(how='any')
+step_dict = pd.Series(step_years.year.values, index=step_years.step)
 # list of years for projection
 year_range = range(int(step_years.year.min()), 2101, 1)
 # DCM costs
@@ -78,6 +79,7 @@ dcm_costs.dropna(inplace=True)
 # mapping between MP habitats and DCMs
 hab2dcm = input_file.parse(sheet_name="Script Input", header=0, \
         usecols="J,K,L,M").dropna(how='any')
+hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
 
 # read data from John Dickey's workbook
 mp_file = pd.ExcelFile(file_path + mp_name)
@@ -87,80 +89,87 @@ mp_new_names = ["dca", "acres", "dcm_base", "dcm_dwm", "dcm_step0", \
 mp_new = mp_file.parse(sheet_name="MP_new", header=1, \
         usecols="Q,R,U,V,W,X,Z", names=mp_new_names, \
         converters={'Step':int}).dropna(how='any')
-mp_sched = mp_new.copy()
-wd_hv_gen = mp_file.parse(sheet_name="WD_HV_gen", header=0, \
-        usecols="C,I").dropna(how='any')
-wd_src = wd_hv_gen.copy()
-# expand mp_new data to show all steps in Master Project
-for n in ['1', '2', '3', '4']:
-    mp_new['dcm_step' + n] = ['X'] * len(mp_new)
-    for i in mp_new.index:
-        if mp_new.loc[i, 'mp_step'] > int(n):
-            mp_new.loc[i, 'dcm_step' + n] = mp_new.loc[i, 'dcm_step0']
-        else:
-            mp_new.loc[i, 'dcm_step' + n] = mp_new.loc[i, 'dcm_step5']
+# pull water demand by DCA (in acre-ft/year)
+mp_new_wd = mp_file.parse(sheet_name="MP_new", header=1, \
+        usecols="Q,Z,AM,BA,BO,CC", converters={'Step':int}, \
+        names=[mp_new_names[i] for i in [0, 6, 2, 3, 4, 5]]).dropna(how='any')
 
 # get dca areas
-dcm_miles = np.array(mp_new.acres * 0.0015625)
-dcm_acres = np.array(mp_new.acres)
-# create clean mp_schedule
-mp_new.drop(columns=['acres', 'mp_step'], inplace=True)
-mp_new.columns = ['dca'] + step_years['step'].tolist()
-mp_years = mp_new.copy()
-mp_years.columns = ['dca'] + step_years['year'].tolist()
-# expand mp_years table to include all years in range
-for yr in year_range:
-    if yr in mp_years.columns:
-        mp_years[yr] = mp_years[yr]
-    else:
-        mp_years[yr] = mp_years[yr-1]
-col_order = ['dca']
-col_order.extend(year_range)
-mp_years = mp_years[col_order]
-mp_dcm = np.array(mp_years.copy())
-mp_wd = np.zeros((mp_dcm.shape[0], mp_dcm.shape[1]-1, 10))
-for name in hab2dcm.mp_name:
-    mp_dcm[mp_dcm==name] = hab2dcm[hab2dcm.mp_name==name].dust_dcm
+dca_areas = mp_new[['dca', 'acres']].copy()
+dca_areas['miles'] = mp_new['acres'] * 0.0015625
+
+mp_steps = mp_new.copy()
+mp_steps_wd = mp_new_wd.copy()
+# expand data to show all steps in Master Project
+for obj in [mp_steps, mp_steps_wd]:
+    obj.set_index('dca', inplace=True)
+    for n in ['1', '2', '3', '4']:
+        obj['dcm_step' + n] = ['X'] * len(obj)
+        for i in obj.index:
+            if obj.loc[i, 'mp_step'] > int(n):
+                obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step0']
+            else:
+                obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step5']
+    obj.drop(columns=[s for s in obj.columns if 'dcm' not in s], inplace=True)
+    obj.columns=[s[4:] for s in obj.columns]
+
+mp_years = mp_steps.copy()
+mp_years_wd = mp_steps_wd.copy()
+# IS THERE A BETTER WAY TO DO THIS WITH SIDE_FILLING?
+for obj2 in [mp_years, mp_years_wd]:
+    obj2.columns = [step_dict[a] for a in obj2.columns]
+    # expand table to include all years in range
+    for yr in year_range:
+        if yr in obj2.columns:
+            obj2[yr] = obj2[yr]
+        else:
+            obj2[yr] = obj2[yr-1]
+
+mp_years_dcm = mp_years[year_range].copy()
+mp_years_dcm.replace(hab_dict, inplace=True)
 # build costs array 
 # dim 0 = total capital cost ($ million) 
 # dim 1 = o&m cost ($ million) 
-# dim 2 = water demand (acre-ft/year)
-mp_costs = np.zeros((mp_dcm.shape[0], mp_dcm.shape[1]-1, 11))
-for i in range(0, len(mp_costs), 1):
-    mp_costs[i, 0, 1] = dcm_costs.loc[dcm_costs.dust_dcm==mp_dcm[i, 1], \
-            'om'].item() * dcm_miles[i]
-    mp_costs[i, 0, 2] = wd_hv_gen.loc[wd_hv_gen.DCM==mp_years.iloc[i, 1], \
-            'Water (f/y)'].item() * dcm_acres[i]
-    lifespan = dcm_costs.loc[dcm_costs.dust_dcm==mp_dcm[i, 1], \
+mp_costs = np.zeros((mp_years_dcm.shape[0], mp_years_dcm.shape[1], 2))
+for i in range(0, len(mp_years_dcm.index), 1):
+    mp_costs[i, 0, 1] = dcm_costs.loc[dcm_costs.dust_dcm==mp_years_dcm.iloc[i, 1], \
+            'om'].item() * dca_areas['miles'][i]
+    lifespan = dcm_costs.loc[dcm_costs.dust_dcm==mp_years_dcm.iloc[i, 1], \
             'lifespan'].item()
     if lifespan == 0: lifespan = float('inf')
     age = 0
-    for j in range(1, len(mp_costs[i, :]), 1):
-        if mp_dcm[i, j+1] == mp_dcm[i, j]:
+    for j in range(1, len(year_range), 1):
+        if mp_years_dcm.iloc[i, j-1] == mp_years_dcm.iloc[i, j]:
             mp_costs[i, j, 1] = dcm_costs.loc[dcm_costs.dust_dcm==\
-                    mp_dcm[i, j+1], 'om'].item() * dcm_miles[i]
+                    mp_years_dcm.iloc[i, j], 'om'].item() * dca_areas['miles'][i]
             age += 1
             if age > lifespan:
                 mp_costs[i, j, 1] = 0
                 mp_costs[i, j, 0] = dcm_costs.loc[dcm_costs.dust_dcm==\
-                        mp_dcm[i, j+1], 'replacement'].item() * dcm_miles[i]
+                        mp_years_dcm.iloc[i, j], 'replacement'].item() * \
+                dca_areas['miles'][i]
                 age = 0
         else:
             mp_costs[i, j, 0] = dcm_costs.loc[dcm_costs.dust_dcm==\
-                    mp_dcm[i, j+1], 'capital'].item() * dcm_miles[i]
-            lifespan = dcm_costs.loc[dcm_costs.dust_dcm==mp_dcm[i, 1], \
+                    mp_years_dcm.iloc[i, j], 'capital'].item() * dca_areas['miles'][i]
+            lifespan = dcm_costs.loc[dcm_costs.dust_dcm==mp_years_dcm.iloc[i, 1], \
                     'lifespan'].item()
             if lifespan == 0: lifespan = float('inf')
             age = 0
-        mp_costs[i, j, 2] = wd_hv_gen.loc[wd_hv_gen.DCM==mp_years.iloc[i, j+1], \
-            'Water (f/y)'].item() * dcm_acres[i]
 
-npv_summary = pd.DataFrame({\
+cost_summary = pd.DataFrame({\
         'year':year_range, \
         'capital':np.sum(mp_costs[:, :, 0], axis=0), \
         'om':np.sum(mp_costs[:, :, 1], axis=0), \
-        'water_demand':np.sum(mp_costs[:, :, 2], axis=0), \
         })
+
+mp_steps_dcm = mp_steps[step_years['step'].tolist()].copy()
+mp_steps_dcm.replace(hab_dict, inplace=True)
+mp_steps_dcm['acres'] = [dca_areas[dca_areas.dca==a].acres.item() for a in \
+        mp_steps_dcm.index]
+mp_steps_dcm[['base', 'acres']].groupby('base')['acres'].sum()
+
+
 
 sheet_dict = {'base':'No Change', 'dwm':'DWM', 'step0':'Step0', 'step1':'Step1', \
         'step2':'Step2', 'step3':'Step3', 'step4':'Step4', \
@@ -168,15 +177,15 @@ sheet_dict = {'base':'No Change', 'dwm':'DWM', 'step0':'Step0', 'step1':'Step1',
 wb = load_workbook(filename = file_path + npv_name)
 for step in step_years.step:
     yr = int(step_years[step_years.step==step].year.item())
-    ind = npv_summary.year.tolist().index(yr)
-    capital_output = npv_summary.capital.tolist()
+    ind = cost_summary.year.tolist().index(yr)
+    capital_output = cost_summary.capital.tolist()
     capital_output[ind:] = [0]*(len(capital_output) - ind)
-    om_output = npv_summary.om.tolist()
+    om_output = cost_summary.om.tolist()
     om_output[ind:] = [om_output[ind]]*(len(om_output) - ind)
-    wd_output = npv_summary.water_demand.tolist()
+    wd_output = cost_summary.water_demand.tolist()
     wd_output[ind:] = [wd_output[ind]]*(len(wd_output) - ind)
     ws = wb.get_sheet_by_name(sheet_dict[step])
-    for i in range(0, len(npv_summary), 1):
+    for i in range(0, len(cost_summary), 1):
         offset = 12
         ws.cell(row=i+offset, column=3).value = capital_output[i]
         ws.cell(row=i+offset, column=4).value = om_output[i]
@@ -194,6 +203,6 @@ book = load_workbook(filename=output_file)
 writer = pd.ExcelWriter(output_file, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
-mp_sched.to_excel(writer, sheet_name='MP Schedule', index=False)
-wd_src.to_excel(writer, sheet_name='MP Water', index=False)
+mp_new.to_excel(writer, sheet_name='MP Schedule', index=False)
+mp_new_wd.to_excel(writer, sheet_name='MP Water', index=False)
 writer.save()
