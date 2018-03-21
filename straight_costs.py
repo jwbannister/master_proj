@@ -95,8 +95,8 @@ mp_new_wd = mp_file.parse(sheet_name="MP_new", header=1, \
         names=[mp_new_names[i] for i in [0, 6, 2, 3, 4, 5]]).dropna(how='any')
 
 # get dca areas
-dca_areas = mp_new[['dca', 'acres']].copy()
-dca_areas['miles'] = mp_new['acres'] * 0.0015625
+dca_areas = mp_new[['dca', 'acres']].copy().set_index('dca')
+dca_areas['miles'] = dca_areas['acres'] * 0.0015625
 
 mp_steps = mp_new.copy()
 mp_steps_wd = mp_new_wd.copy()
@@ -115,7 +115,6 @@ for obj in [mp_steps, mp_steps_wd]:
 
 mp_years = mp_steps.copy()
 mp_years_wd = mp_steps_wd.copy()
-# IS THERE A BETTER WAY TO DO THIS WITH SIDE_FILLING?
 for obj2 in [mp_years, mp_years_wd]:
     obj2.columns = [step_dict[a] for a in obj2.columns]
     # expand table to include all years in range
@@ -161,15 +160,8 @@ cost_summary = pd.DataFrame({\
         'year':year_range, \
         'capital':np.sum(mp_costs[:, :, 0], axis=0), \
         'om':np.sum(mp_costs[:, :, 1], axis=0), \
+        'water_demand':mp_years_wd.sum(axis=0)
         })
-
-mp_steps_dcm = mp_steps[step_years['step'].tolist()].copy()
-mp_steps_dcm.replace(hab_dict, inplace=True)
-mp_steps_dcm['acres'] = [dca_areas[dca_areas.dca==a].acres.item() for a in \
-        mp_steps_dcm.index]
-mp_steps_dcm[['base', 'acres']].groupby('base')['acres'].sum()
-
-
 
 sheet_dict = {'base':'No Change', 'dwm':'DWM', 'step0':'Step0', 'step1':'Step1', \
         'step2':'Step2', 'step3':'Step3', 'step4':'Step4', \
@@ -190,6 +182,52 @@ for step in step_years.step:
         ws.cell(row=i+offset, column=3).value = capital_output[i]
         ws.cell(row=i+offset, column=4).value = om_output[i]
         ws.cell(row=i+offset, column=19).value = wd_output[i]
+
+    # write water demand summary tables
+    ws = wb.get_sheet_by_name('Water Use Summary')
+    wd_summary_dcm = pd.DataFrame({'wd':mp_steps_wd[step], \
+            'dcm':mp_steps_dcm[step]}).groupby('dcm')['wd'].sum()
+    wd_summary_dcm = wd_summary_dcm.reindex(dcm_costs.dust_dcm.tolist())
+    wd_summary_dcm.fillna(0, inplace=True)
+    wd_summary_dcm = \
+            wd_summary_dcm.append(pd.Series({'total':wd_summary_dcm.sum()}))
+    for i in range(0, len(wd_summary_dcm), 1):
+        col = step_years.index[step_years.step==step].item()
+        ws.cell(row=i+5, column=col+2).value = int(wd_summary_dcm[i].round())
+    wd_summary_hab = pd.DataFrame({'wd':mp_steps_wd[step], \
+            'hab':mp_steps[step]}).groupby('hab')['wd'].sum()
+    wd_summary_hab = wd_summary_hab.reindex(hab2dcm.mp_name.tolist())
+    wd_summary_hab.fillna(0, inplace=True)
+    wd_summary_hab = \
+            wd_summary_hab.append(pd.Series({'total':wd_summary_hab.sum()}))
+    for i in range(0, len(wd_summary_hab), 1):
+        col = step_years.index[step_years.step==step].item()
+        ws.cell(row=i+5, column=col+12).value = int(wd_summary_hab[i].round())
+
+    mp_steps_dcm = pd.concat([mp_steps.replace(hab_dict), \
+            dca_areas['acres']], axis=1)
+    mp_steps_hab = pd.concat([mp_steps, dca_areas['acres']], axis=1)
+    # write area summary tables
+    ws = wb.get_sheet_by_name('Area Summary')
+    area_summary_dcm = pd.DataFrame({'acres':mp_steps_dcm['acres'], \
+            'dcm':mp_steps_dcm[step]}).groupby('dcm')['acres'].sum()
+    area_summary_dcm = area_summary_dcm.reindex(dcm_costs.dust_dcm.tolist())
+    area_summary_dcm.fillna(0, inplace=True)
+    area_summary_dcm = \
+            area_summary_dcm.append(pd.Series({'total':area_summary_dcm.sum()}))
+    for i in range(0, len(area_summary_dcm), 1):
+        col = step_years.index[step_years.step==step].item()
+        ws.cell(row=i+5, column=col+2).value = int(area_summary_dcm[i].round())
+    area_summary_hab = pd.DataFrame({'acres':mp_steps_dcm['acres'], \
+            'hab':mp_steps_hab[step]}).groupby('hab')['acres'].sum()
+    area_summary_hab = area_summary_hab.reindex(hab2dcm.mp_name.tolist())
+    area_summary_hab.fillna(0, inplace=True)
+    area_summary_hab = \
+            area_summary_hab.append(pd.Series({'total':area_summary_hab.sum()}))
+    for i in range(0, len(area_summary_hab), 1):
+        col = step_years.index[step_years.step==step].item()
+        ws.cell(row=i+5, column=col+12).value = int(area_summary_hab[i].round())
+
 ws = wb.get_sheet_by_name('NPV Summary')
 ws.cell(row=18, column=2).value = 'Analysis run on ' + \
         datetime.datetime.now().strftime('%m-%d-%Y %H:%M')
