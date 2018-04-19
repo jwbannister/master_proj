@@ -1,3 +1,5 @@
+import pandas as pd
+from time import time
 import numpy as np
 
 def countup(x):
@@ -10,13 +12,29 @@ def evaluate_case(case, factors, areas):
     factors = habitat and water use factors (DataFrame).
     areas = areas of DCAs in acres (Series, in same DCA order as case).
     """
-    suffixes = ["_ac"] * 5 + ["_af/y"]
-    value_columns = factors.columns + suffixes
     case_factors = pd.DataFrame(np.empty([len(case), len(factors.columns)]), \
-            index=areas.index, columns=value_columns.tolist())
+            index=areas.index, columns=factors.columns.tolist())
     for x in range(0, len(factors.columns)):
         case_factors.iloc[:, x] = case.dot(factors.iloc[:, x]) * areas
     return case_factors
+
+def evaluate_dca_change(case, previous_case, factors, overloaded_hab, \
+        underloaded_hab):
+    previous_case_factors = factors.iloc[previous_case.tolist().index(1)]
+    case_factors = factors.iloc[case.index(1)]
+    overload_increase = any([case_factors[x] - previous_case_factors[x] > 0 \
+            for x in overloaded_hab])
+    underload_decrease = any([case_factors[x] - previous_case_factors[x] < 0 \
+            for x in underloaded_hab])
+    water_increase = case_factors['water'] - previous_case_factors['water'] > 0
+    if overload_increase and underload_decrease:
+        return False
+    elif water_increase and underload_decrease:
+        return False
+    else:
+        return True
+
+
 
 def single_factor_total(case, dcm_factors, dca_areas):
     """With an assignment matrix for a MP scenario, calculate total acreage
@@ -35,8 +53,36 @@ def compare_value(case, factors, areas, check_case, percent):
     check_val = single_factor_total(np.array(check_case), factors, areas)
     return val < percent * check_val
 
-def freeze_dcas(case, indices, check_case):
-    case_array = np.array(case)
-    comp = np.diag(case_array.dot(check_case.transpose())).tolist()
-    return not all([comp[x]==1 for x in indices])
+def transition_area(case, check_case, dcms_list, dca_areas):
+    transition = {'hard': [0] * len(case), 'soft': [0] * len(case)}
+    soft_dcms = ['Tillage', 'Brine', 'Till-Brine']
+    soft_indices = [x for x, y in enumerate(dcms_list) if y in soft_dcms]
+    for row in range(0, len(case)):
+        change = not all(case[row] == check_case[row])
+        if change and case[row].index(1) in soft_indices:
+            transition['soft'][row] = 1
+        if change and case[row].index(1) not in soft_indices:
+            transition['hard'][row] = 1
+    hard_sqmi = pd.Series(transition['hard'] * dca_areas).sum()
+    soft_sqmi = pd.Series(transition['soft'] * dca_areas).sum()
+    return {'hard': hard_sqmi, 'soft': soft_sqmi}
 
+def hard_area_check(case, check_case, soft_indices, dca_areas, hard_limit):
+    transition = [0] * len(case)
+    for row in range(0, len(case)):
+        change = not all(case[row] == check_case[row])
+        if change and list(case[row]).index(1) not in soft_indices:
+            transition[row] = 1
+    return pd.Series(transition * dca_areas).sum() < hard_limit
+
+def benefit_check(case, check_sum, factors, areas):
+    case_sum = evaluate_case(case, factors, areas).sum()
+    hab_decrease = [case_sum.iloc[i] < check_sum.iloc[i] for i in range(0, 4)]
+    water_increase = case_sum.iloc[5] > check_sum.iloc[5]
+    return not (all(hab_decrease) and water_increase)
+
+def overload_increase(case, check_sum, hab, factors, areas):
+    case_sum = evaluate_case(case, factors, areas).sum()
+    hab_increase = case_sum[hab] > check_sum[hab]
+    water_increase = case_sum['water_af/y'] > check_sum['water_af/y']
+    return not (hab_increase and water_increase)
