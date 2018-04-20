@@ -83,8 +83,8 @@ def overload_increase(case, check_sum, hab, factors, areas):
     water_increase = case_sum['water_af/y'] > check_sum['water_af/y']
     return not (hab_increase and water_increase)
 
-def prioritize(value_percents):
-    if any([x < 0.9 for x in value_percents[0:5]]):
+def prioritize(value_percents, minimum_hab):
+    if any([x < minimum_hab for x in value_percents[0:5]]):
         return {1: value_percents[0:5].idxmin(), 2: 'water'}
     else:
         return {1: 'water', 2: value_percents[0:5].idxmin()}
