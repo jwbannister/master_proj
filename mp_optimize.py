@@ -1,12 +1,11 @@
 import pandas as pd
 import numpy as np
 import itertools as it
-from tqdm import tqdm
 import csv
 from multiprocessing import Pool
 import mp_optimize_func as func
 from time import time
-from scipy.spatial.distance import pdist, squareform
+from collections import Counter
 
 # read data from original Master Project planning workbook
 file_path = "/home/john/airsci/owens/Master Project & Cost Benefit/"
@@ -63,38 +62,25 @@ dca_info = dca_info.iloc[0:num_dca, 0:num_dcm].copy()
 dca_info = dca_info.loc[:, ['MP Acres', 'Cent_N', 'Cent_E']]
 dca_info['sqmi'] = dca_info['MP Acres'] * 0.0015625
 
-# evaluate base case habitat and water usage
-base_total = func.evaluate_case(base_case, factors, dca_info['MP Acres']).sum()
-# where is current scenario compared to base?
-previous_total = func.evaluate_case(previous_case, factors, dca_info['MP Acres']).sum()
-previous_percent = previous_total/base_total
-overloaded_hab = [y for x, y in enumerate(previous_percent.index.tolist()) \
-        if previous_percent[x] > 1]
-underloaded_hab = [y for x, y in enumerate(previous_percent.index.tolist()) \
-        if previous_percent[x] < 0.9]
-
 # which DCMs count as a "soft" transition?
 soft_dcms = ['Tillage', 'Brine', 'Till-Brine']
-soft_indices = [x for x, y in enumerate(factors.index.tolist()) if y in soft_dcms]
+soft_idx = [x for x, y in enumerate(factors.index.tolist()) if y in soft_dcms]
 
-# split data into chunks for processing
-chunk_size = 160
-num_chunks = -(-num_dca // chunk_size)
-base_case_chunk = [base_case[chunk_size*n:chunk_size*(n+1)] \
-        for n in range(0, num_chunks)]
-previous_case_chunk = [previous_case[chunk_size*n:chunk_size*(n+1)] \
-        for n in range(0, num_chunks)]
-constraints_chunk = [constraints[chunk_size*n:chunk_size*(n+1)] \
-        for n in range(0, num_chunks)]
-dca_info_chunk = [dca_info.iloc[chunk_size*n:chunk_size*(n+1)] \
-        for n in range(0, num_chunks)]
+# evaluate base case habitat and water usage
+base_total = func.evaluate_case(base_case, factors, dca_info['MP Acres']).sum()
+# evaluate previous case compared to base for initial priority
+new_case = previous_case.copy()
+new_total = func.evaluate_case(new_case, factors, dca_info['MP Acres']).sum()
+new_percent = new_total/base_total
+priority = func.prioritize(new_percent)
+hard_transition = 0
+soft_transition = 0
+tracking = []
 
-allowed_scenario = []
-for i in range(0, num_chunks):
-    # build list of allowable assignments for each DCA
+while hard_transition < 3:
     allowed_cases = []
-    for j in range(0, len(constraints_chunk[i])):
-        tmp = constraints_chunk[i][j].tolist()
+    for j in range(0, len(constraints)):
+        tmp = constraints[j].tolist()
         tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
         a = []
         for d in tmp_ind:
@@ -102,27 +88,54 @@ for i in range(0, num_chunks):
             b[d] = 1
             a.append(b)
         allowed_cases.append(a)
-    n_allowed = reduce(lambda x, y: x*y, [len(z) for z in allowed_cases])
+    n_allowed = [len(x) for x in allowed_cases]
 
     smart_cases = []
     for dca in range(0, len(allowed_cases)):
+        benefit = []
         dca_assigns = []
         for case in range(0, len(allowed_cases[dca])):
-            if func.evaluate_dca_change(allowed_cases[dca][case], \
-                    previous_case_chunk[i][dca], factors, overloaded_hab, \
-                    underloaded_hab):
+            case_eval = func.evaluate_dca_change(allowed_cases[dca][case], \
+                previous_case[dca], factors, priority)
+            if case_eval['smart']:
                 dca_assigns.append(allowed_cases[dca][case])
-        smart_cases.append(dca_assigns)
+                benefit.append(case_eval['benefit'])
+        if not benefit:
+            best_assigns = (0, previous_case[dca].tolist(), dca)
+        else:
+            best_assigns = [(x, y, dca) for x,y in sorted(zip(benefit, dca_assigns), \
+                    reverse=True)][0]
+        smart_cases.append([best_assigns, (0, previous_case[dca].tolist(), dca)])
+    n_smart = [len(x) for x in smart_cases]
+    smartest = sorted(smart_cases, reverse=True)
+
+    try:
+        nn = 0
+        while hard_transition + dca_info.iloc[smartest[nn][0][2]]['sqmi'] > 3:
+            nn += 1
+    except:
+        break
+    if smartest[nn][0][0] == 0:
+        break
+
+    tracking.append({'dca': dca_info.index.tolist()[smartest[nn][0][2]],
+            'from': factors.index.tolist()[\
+                    previous_case[smartest[nn][0][2]].tolist().index(1)],
+            'to': factors.index.tolist()[smartest[nn][0][1].index(1)]})
+    new_case[smartest[nn][0][2]] = smartest[nn][0][1]
+    constraints[smartest[nn][0][2]] = np.array(smartest[nn][0][1])
+    new_total = func.evaluate_case(new_case, factors, dca_info['MP Acres']).sum()
+    new_percent = new_total/base_total
+    priority = func.prioritize(new_percent)
+    change_area = dca_info.iloc[smartest[nn][0][2]]['sqmi']
+    if smartest[nn][0][1].index(1) in soft_idx:
+        soft_transition += change_area
+    else:
+        hard_transition += change_area
 
 
-
-    
-
-
-    previous_sum = func.evaluate_case(previous_case_chunk[i], factors, \
-            dca_info_chunk[i]['MP Acres']).sum()
-
-
+# which DCAs have a constraint conflict (no smart cases)?
+conflicts = [x for x, y in enumerate(n_smart) if y==0]
 
     # build iterator of all possible assignment combinations
     assignment_combinations = lambda: it.product(*allowed_cases)

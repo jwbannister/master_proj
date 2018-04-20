@@ -18,22 +18,16 @@ def evaluate_case(case, factors, areas):
         case_factors.iloc[:, x] = case.dot(factors.iloc[:, x]) * areas
     return case_factors
 
-def evaluate_dca_change(case, previous_case, factors, overloaded_hab, \
-        underloaded_hab):
+def evaluate_dca_change(case, previous_case, factors, priority):
     previous_case_factors = factors.iloc[previous_case.tolist().index(1)]
     case_factors = factors.iloc[case.index(1)]
-    overload_increase = any([case_factors[x] - previous_case_factors[x] > 0 \
-            for x in overloaded_hab])
-    underload_decrease = any([case_factors[x] - previous_case_factors[x] < 0 \
-            for x in underloaded_hab])
-    water_increase = case_factors['water'] - previous_case_factors['water'] > 0
-    if overload_increase and underload_decrease:
-        return False
-    elif water_increase and underload_decrease:
-        return False
+    if priority=='water':
+        smart = case_factors['water'] - previous_case_factors['water'] <= 0
+        benefit = previous_case_factors['water'] - case_factors['water']
     else:
-        return True
-
+        smart = case_factors[priority] - previous_case_factors[priority] >= 0
+        benefit = case_factors[priority] - previous_case_factors[priority]
+    return {'smart': smart, 'benefit':benefit}
 
 
 def single_factor_total(case, dcm_factors, dca_areas):
@@ -86,3 +80,9 @@ def overload_increase(case, check_sum, hab, factors, areas):
     hab_increase = case_sum[hab] > check_sum[hab]
     water_increase = case_sum['water_af/y'] > check_sum['water_af/y']
     return not (hab_increase and water_increase)
+
+def prioritize(value_percents):
+    if any([x < 0.9 for x in value_percents[0:5]]):
+        return value_percents.idxmin()
+    else:
+        return 'water'
