@@ -21,13 +21,15 @@ def evaluate_case(case, factors, areas):
 def evaluate_dca_change(case, previous_case, factors, priority):
     previous_case_factors = factors.iloc[previous_case.tolist().index(1)]
     case_factors = factors.iloc[case.index(1)]
-    if priority=='water':
+    if priority[1]=='water':
         smart = case_factors['water'] - previous_case_factors['water'] <= 0
-        benefit = previous_case_factors['water'] - case_factors['water']
+        benefit1 = previous_case_factors['water'] - case_factors['water']
+        benefit2 = case_factors[priority[2]] - previous_case_factors[priority[2]]
     else:
-        smart = case_factors[priority] - previous_case_factors[priority] >= 0
-        benefit = case_factors[priority] - previous_case_factors[priority]
-    return {'smart': smart, 'benefit':benefit}
+        smart = case_factors[priority[1]] - previous_case_factors[priority[1]] >= 0
+        benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
+        benefit2 = previous_case_factors['water'] - case_factors['water']
+    return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
 
 def single_factor_total(case, dcm_factors, dca_areas):
@@ -83,6 +85,6 @@ def overload_increase(case, check_sum, hab, factors, areas):
 
 def prioritize(value_percents):
     if any([x < 0.9 for x in value_percents[0:5]]):
-        return value_percents.idxmin()
+        return {1: value_percents.idxmin(), 2: 'water'}
     else:
-        return 'water'
+        return {1: 'water', 2: value_percents.idxmin()}
