@@ -85,6 +85,6 @@ def overload_increase(case, check_sum, hab, factors, areas):
 
 def prioritize(value_percents):
     if any([x < 0.9 for x in value_percents[0:5]]):
-        return {1: value_percents.idxmin(), 2: 'water'}
+        return {1: value_percents[0:5].idxmin(), 2: 'water'}
     else:
-        return {1: 'water', 2: value_percents.idxmin()}
+        return {1: 'water', 2: value_percents[0:5].idxmin()}
