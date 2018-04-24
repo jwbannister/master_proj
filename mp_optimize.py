@@ -13,17 +13,10 @@ file_name = "MP Workbook JWB 04-11-2018.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 generic_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
         usecols="A,B,C,D,E,F,G", \
-        names=["hdcm", "bw", "mw", "pl", "ms", "md", "water"])
-generic_factors.set_index('hdcm', inplace=True)
-custom_habitats = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
-        usecols="A,B,C,D,E,F,G,H,I", \
-        names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
-custom_habitats.set_index('dca', inplace=True)
-for i in range(0, len(custom_habitats)):
-    for col in ['bw', 'mw', 'pl', 'ms', 'md', 'water']:
-        if np.isnan(custom_habitats.loc[:, col][i]):
-            custom_habitats.loc[:, col][i] = \
-            factors.at[custom_habitats['dcm'][i], 'water']
+        names=["idx", "bw", "mw", "pl", "ms", "md", "water"])
+generic_factors.set_index('idx', inplace=True)
+generic_factors['dcm'] = generic_factors.index.tolist()
+generic_factors['step'] = ['generic'] * len(generic_factors)
 assignments = mp_file.parse(sheet_name="MP_new", header=None, skiprows=25, \
         usecols="A,B,C,D,F", \
         names=["dca", "area_ac", "area_sqmi", "base", "step0"])
@@ -42,6 +35,16 @@ step0_assignments = [step0_assignments[x].astype(int) for x in \
         range(0, len(step0_assignments))]
 step0 = pd.DataFrame(step0_assignments, index=assignments.index)
 step0.columns = generic_factors.index
+
+# build up custom habitat and water factor tables
+custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
+        usecols="A,B,C,D,E,F,G,H,I", \
+        names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
+custom_filled = custom_info.apply(func.backfill, axis=1, \
+        backfill_factors=generic_factors)
+custom_factors = {'base': (), 'dwm': (), 'step0': (), 'mp': ()}
+for x in ['base', 'dwm', 'step0', 'mp']:
+    custom_factors[x] = func.build_custom_steps(x, custom_factors, custom_filled)
 
 # read in constraints (and manual assignments if wanted)
 info_file = pd.ExcelFile("/home/john/code/master_proj/DCA-DCM Constraints.xlsx")
@@ -63,7 +66,7 @@ dca_info['sqmi'] = dca_info['MP Acres'] * 0.0015625
 
 # define "soft" transition DCMs?
 soft_dcms = ['Tillage', 'Sand Fences']
-soft_idx = [x for x, y in enumerate(factors.index.tolist()) if y in soft_dcms]
+soft_idx = [x for x, y in enumerate(generic_factors.index.tolist()) if y in soft_dcms]
 
 # set limits and toggles - MAKE CHANGES HERE
 allow_sand_fences = False
@@ -72,26 +75,37 @@ if not allow_sand_fences:
 hard_limit = 3
 soft_limit = 4.5
 habitat_minimum = 0.9
-use_custom_habitat = True
+use_custom_factors = False
 
 # format data for analysis
-factors = generic_factors.copy()
 base_case = np.array(base).copy()
 starting_case = np.array(step0).copy()
+
 # evaluate base case habitat and water usage
-generic_base = func.evaluate_case(base_case, factors, dca_info['MP Acres']).sum()
-generic_starting = func.evaluate_case(starting_case, factors, dca_info['MP Acres']).sum()
-if use_custom_habitat:
-    base_values = custom_habitats[custom_habitats.step=='Base']
-    base_acreage = base_values[['bw','mw', 'pl', 'ms', 'md', 'water']].\
-            multiply(dca_info['MP Acres'], axis=0)
-    base_total = base_acreage.sum()
+base_assignments = func.get_assignments(base_case, base.index.tolist(), \
+        generic_factors.index.tolist())
+if use_custom_factors:
+    base_factors = func.build_factor_table(base_assignments, custom_factors, \
+            generic_factors, 'step0')
 else:
-    base_total = generic_base.copy()
+    base_factors = func.build_factor_table(base_assignments, custom_factors, \
+            generic_factors, 'generic')
+base_total = base_factors.loc[:, ['bw', 'mw', 'pl', 'ms', 'md', 'water']]\
+        .multiply(dca_info['MP Acres'], axis=0).sum()
+
 # evaluate starting case compared to base for initial priority
-starting_total = func.evaluate_case(starting_case, \
-        factors, dca_info['MP Acres']).sum()
-starting_percent = starting_total/base_total
+start_assignments = func.get_assignments(starting_case, base.index.tolist(), \
+        generic_factors.index.tolist())
+if use_custom_factors:
+    start_factors = func.build_factor_table(start_assignments, custom_factors, \
+            generic_factors, 'step0')
+else:
+    start_factors = func.build_factor_table(start_assignments, custom_factors, \
+            generic_factors, 'generic')
+start_total = start_factors.loc[:, ['bw', 'mw', 'pl', 'ms', 'md', 'water']]\
+        .multiply(dca_info['MP Acres'], axis=0).sum()
+
+starting_percent = start_total/base_total
 
 # initialize ariables before loop - DO NOT MAKE CHANGES HERE
 tick = 0
@@ -122,6 +136,14 @@ for step in range(0, 6):
                 " = " + str(round(new_percent[priority[2]], 3))
         constraints = new_constraints.copy()
         eval_case = new_case.copy()
+        new_assignments = func.get_assignments(eval_case, base.index.tolist(), \
+                generic_factors.index.tolist())
+        if use_custom_factors:
+            factors = func.build_factor_table(new_assignments, custom_factors, \
+                generic_factors, 'mp')
+        else:
+            factors = func.build_factor_table(new_assignments, custom_factors, \
+                generic_factors, 'generic')
         allowed_cases = []
         for j in range(0, len(constraints)):
             tmp = constraints[j].tolist()

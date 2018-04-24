@@ -88,3 +88,49 @@ def prioritize(value_percents, minimum_hab):
         return {1: value_percents[0:5].idxmin(), 2: 'water'}
     else:
         return {1: 'water', 2: value_percents[0:5].idxmin()}
+
+def backfill(row, backfill_factors):
+    for col in ['bw', 'mw', 'pl', 'ms', 'md', 'water']:
+        if np.isnan(row[col]):
+            row[col] = backfill_factors.loc[row['dcm'], col]
+    return row
+
+def build_custom_steps(stp, custom_factors, custom_filled):
+    x_walk = {'base': 'Base', 'dwm': 'DWM', 'step0': 'Zero', 'mp': 'MP'}
+    previous_walk = {'base':'', 'dwm': 'base', 'step0': 'dwm', 'mp': 'step0'}
+    prev = previous_walk[stp]
+    excel_stp = x_walk[stp]
+    if stp == 'base':
+        custom_factors['base'] = custom_filled.loc[custom_filled['step']=='Base', :]
+    else:
+        tmp = custom_filled.loc[custom_filled['step']==excel_stp, :]
+        carry = [x not in tmp['dca'].tolist() for \
+                x in custom_factors[prev]['dca'].tolist()]
+        custom_factors[stp] = tmp.append(custom_factors[prev].iloc[carry, :])
+    return custom_factors[stp]
+
+def get_assignments(case, dca_list, dcm_list):
+    assignments = pd.DataFrame([dcm_list[x.tolist().index(1)] for x in case], \
+            index=dca_list, columns=['dcm'])
+    return assignments
+
+def build_factor_table(assignments, custom_factors, generic_factors, stp):
+    factors = pd.DataFrame()
+    for idx in assignments.index.tolist():
+        dcm = assignments.loc[idx]['dcm']
+        if stp == 'generic':
+            tmp = generic_factors.loc[dcm].copy()
+            tmp['dca'] = idx
+            factors = factors.append(tmp)
+        else:
+            dca_idx = [x for x, y in enumerate(custom_factors[stp]['dca']) if y==idx]
+            dcm_idx = [x for x, y in enumerate(custom_factors[stp]['dcm']) if y==dcm]
+            custom_idx = [x for x in dca_idx if x in dcm_idx]
+            if len(custom_idx)>0:
+                factors = factors.append(custom_factors['step0'].iloc[custom_idx])
+            else:
+                tmp = generic_factors.loc[dcm].copy()
+                tmp['dca'] = idx
+                factors = factors.append(tmp)
+    factors.set_index('dca', inplace=True)
+    return factors
