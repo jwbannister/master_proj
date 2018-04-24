@@ -36,6 +36,8 @@ step0_assignments = [step0_assignments[x].astype(int) for x in \
         range(0, len(step0_assignments))]
 step0 = pd.DataFrame(step0_assignments, index=assignments.index)
 step0.columns = generic_factors['dcm']
+# read DCA-DCM constraints file
+start_constraints = mp_file.parse(sheet_name="Constraints", header=8)
 
 # build up custom habitat and water factor tables
 custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
@@ -53,57 +55,32 @@ for x in ['base', 'dwm', 'step0', 'mp']:
 # format generic to similar structure to custom
 generic_factors.drop(['dcm', 'step'], axis=1, inplace=True)
 
-# read in constraints (and manual assignments if wanted)
-info_file = pd.ExcelFile("/home/john/code/master_proj/DCA-DCM Constraints.xlsx")
-# read in manual assignment case (may not be used)
-manual = info_file.parse(sheet_name="Manual Scenario", header=2)
-# read DCA-DCM constraints file
-starting_constraints = info_file.parse(sheet_name="Constraints", header=8)
-
-# define "soft" transition DCMs?
+# define "soft" transition DCMs
 soft_dcms = ['Tillage', 'Sand Fences']
 soft_idx = [x for x, y in enumerate(generic_factors.index.tolist()) if y in soft_dcms]
 
 # set limits and toggles - MAKE CHANGES HERE
 allow_sand_fences = False
 if not allow_sand_fences:
-    starting_constraints.loc[:, 'Sand Fences'] = 0
+    start_constraints.loc[:, 'Sand Fences'] = 0
 hard_limit = 3
 soft_limit = 4.5
 habitat_minimum = 0.9
-use_custom_factors = True
+use_custom_factors = False
 
 # format data for analysis
 base_case = base.copy()
-starting_case = step0.copy()
+start_case = step0.copy()
 
-# evaluate base case habitat and water usage
-base_assignments = func.get_assignments(base_case, base_case.index.tolist(), \
-        generic_factors.index.tolist())
-if use_custom_factors:
-    base_factors = func.build_factor_table(base_assignments, custom_factors, \
-            generic_factors, 'base')
-else:
-    base_factors = func.build_factor_table(base_assignments, custom_factors, \
-            generic_factors, 'generic')
-base_total = base_factors.multiply(dca_info['area_ac'], axis=0).sum()
-
-# evaluate starting case compared to base for initial priority
-start_assignments = func.get_assignments(starting_case, base.index.tolist(), \
-        generic_factors.index.tolist())
-if use_custom_factors:
-    start_factors = func.build_factor_table(start_assignments, custom_factors, \
-            generic_factors, 'step0')
-else:
-    start_factors = func.build_factor_table(start_assignments, custom_factors, \
-            generic_factors, 'generic')
-start_total = start_factors.multiply(dca_info['area_ac'], axis=0).sum()
-
-starting_percent = start_total/base_total
+base_total = func.calc_totals(base_case, custom_factors, generic_factors, \
+        'base', use_custom_factors, dca_info)
+start_total = func.calc_totals(start_case, custom_factors, generic_factors, \
+        'step0', use_custom_factors, dca_info)
+start_percent = start_total/base_total
 
 # initialize ariables before loop - DO NOT MAKE CHANGES HERE
-new_constraints = np.array(starting_constraints).copy()
-new_case = starting_case.copy()
+new_constraints = np.array(start_constraints).copy()
+new_case = start_case.copy()
 new_assignments = func.get_assignments(new_case, base.index.tolist(), \
         generic_factors.index.tolist())
 if use_custom_factors:
@@ -112,22 +89,21 @@ if use_custom_factors:
 else:
     factors = func.build_factor_table(new_assignments, custom_factors, \
         generic_factors, 'generic')
-new_percent = starting_percent.copy()
+new_percent = start_percent.copy()
 new_total = start_total.copy()
 step_info = {}
 hard_transition = 0
 soft_transition = 0
-habitat_minimum = 0.9
 tracking = []
 # set priorities for initial change
-priority = func.prioritize(starting_percent, habitat_minimum)
+priority = func.prioritize(start_percent, habitat_minimum)
+step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
+        'hard transition': hard_transition, \
+        'soft_transition': soft_transition, 'changes': tracking, \
+        'assignments': new_assignments}
 
-for step in range(0, 6):
+for step in range(1, 6):
     print 'step ' + str(step)
-    step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
-            'hard transition': hard_transition, \
-            'soft_transition': soft_transition, 'changes': tracking, \
-            'assignments': new_assignments}
     hard_transition = 0
     soft_transition = 0
     tracking = []
@@ -208,8 +184,12 @@ for step in range(0, 6):
         new_total = factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/base_total
         priority = func.prioritize(new_percent, habitat_minimum)
+    step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
+            'hard transition': hard_transition, \
+            'soft_transition': soft_transition, 'changes': tracking, \
+            'assignments': new_assignments}
 
-total_water_savings = start_total['water'] - new_total['water']
+total_water_savings = base_total['water'] - new_total['water']
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 if use_custom_factors:
@@ -221,3 +201,12 @@ if allow_sand_fences:
     print "Use of Sand Fences for dust control was allowed."
 else:
     print "Use of Sand Fences for dust control was not allowed."
+
+assignment_output = new_assignments.copy()
+assignment_output['step'] = 0
+for i in range(1, 6):
+    changes = [x['dca'] for x in step_info[i]['changes']]
+    flag = [x in changes for x in assignment_output.index.tolist()]
+    assignment_output.loc[flag, 'step'] = i
+assignment_output.to_csv("/home/john/Desktop/mp_optimal_assignments.csv")
+

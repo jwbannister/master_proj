@@ -2,22 +2,6 @@ import pandas as pd
 from time import time
 import numpy as np
 
-def countup(x):
-    return sum(1 for a in x)
-
-def evaluate_case(case, factors, areas):
-    """With an assignment matrix, calculate total habitat acreage and water
-    use for a MP case.
-    case = assignment matrix for case being evaluated (DataFrame).
-    factors = habitat and water use factors (DataFrame).
-    areas = areas of DCAs in acres (Series, in same DCA order as case).
-    """
-    case_factors = pd.DataFrame(np.empty([len(case), len(factors.columns)]), \
-            index=areas.index, columns=factors.columns.tolist())
-    for x in range(0, len(factors.columns)):
-        case_factors.iloc[:, x] = case.dot(factors.iloc[:, x]) * areas
-    return case_factors
-
 def evaluate_dca_change(case, previous_case, factors, generic_factors, priority):
     previous_case_factors = factors.loc[previous_case.name]
     case_factors = generic_factors.iloc[case.index(1)]
@@ -30,38 +14,6 @@ def evaluate_dca_change(case, previous_case, factors, generic_factors, priority)
         benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
         benefit2 = previous_case_factors['water'] - case_factors['water']
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
-
-
-def single_factor_total(case, dcm_factors, dca_areas):
-    """With an assignment matrix for a MP scenario, calculate total acreage
-    (or acre-feet/year) for a single guild habitat (or water usage).
-    case = assignment matrix for scenario being evaluated (array or DataFrame).
-    """
-    area_values = case.dot(dcm_factors) * dca_areas
-    return area_values.sum()
-
-def compare_value(case, factors, areas, check_case, percent):
-    """
-    Check whether a factor value has decrease from a previous scenario.
-    """
-    val = single_factor_total(np.array(case), factors, areas)
-    check_val = single_factor_total(np.array(check_case), factors, areas)
-    return val < percent * check_val
-
-def transition_area(case, check_case, dcms_list, dca_areas):
-    transition = {'hard': [0] * len(case), 'soft': [0] * len(case)}
-    soft_dcms = ['Tillage', 'Brine', 'Till-Brine']
-    soft_indices = [x for x, y in enumerate(dcms_list) if y in soft_dcms]
-    for row in range(0, len(case)):
-        change = not all(case[row] == check_case[row])
-        if change and case[row].index(1) in soft_indices:
-            transition['soft'][row] = 1
-        if change and case[row].index(1) not in soft_indices:
-            transition['hard'][row] = 1
-    hard_sqmi = pd.Series(transition['hard'] * dca_areas).sum()
-    soft_sqmi = pd.Series(transition['soft'] * dca_areas).sum()
-    return {'hard': hard_sqmi, 'soft': soft_sqmi}
-
 
 def prioritize(value_percents, minimum_hab):
     if any([x < minimum_hab for x in value_percents[0:5]]):
@@ -120,3 +72,17 @@ def build_factor_table(assignments, custom_factors, generic_factors, stp):
                 factors = factors.append(tmp)
     factors.set_index('dca', inplace=True)
     return factors
+
+def calc_totals(case, custom_factors, generic_factors, step, \
+        use_custom_factors, dca_info):
+    dca_list = dca_info.index.tolist()
+    dcm_list = generic_factors.index.tolist()
+    assignments = get_assignments(case, dca_list, dcm_list)
+    if use_custom_factors:
+        factors = build_factor_table(assignments, custom_factors, \
+                generic_factors, step)
+    else:
+        factors = build_factor_table(assignments, custom_factors, \
+                generic_factors, 'generic')
+    return factors.multiply(dca_info['area_ac'], axis=0).sum()
+
