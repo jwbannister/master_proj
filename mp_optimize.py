@@ -9,7 +9,7 @@ from collections import Counter
 
 # read data from original Master Project planning workbook
 file_path = "/home/john/airsci/owens/Master Project & Cost Benefit/"
-file_name = "MP Workbook JWB 04-11-2018.xlsx"
+file_name = "MP Workbook JWB 04-25-2018.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 generic_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
         usecols="A,B,C,D,E,F,G", \
@@ -56,7 +56,7 @@ for x in ['base', 'dwm', 'step0', 'mp']:
 generic_factors.drop(['dcm', 'step'], axis=1, inplace=True)
 
 # define "soft" transition DCMs
-soft_dcms = ['Tillage', 'Sand Fences']
+soft_dcms = ['Tillage', 'Brine', 'Till-Brine', 'Sand Fences']
 soft_idx = [x for x, y in enumerate(generic_factors.index.tolist()) if y in soft_dcms]
 
 # set limits and toggles - MAKE CHANGES HERE
@@ -65,8 +65,8 @@ if not allow_sand_fences:
     start_constraints.loc[:, 'Sand Fences'] = 0
 hard_limit = 3
 soft_limit = 4.5
-habitat_minimum = 0.9
-use_custom_factors = False
+habitat_minimum = 0.85 + 0.01
+use_custom_factors = True
 
 # format data for analysis
 base_case = base.copy()
