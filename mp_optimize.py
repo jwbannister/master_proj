@@ -37,7 +37,8 @@ step0_assignments = [step0_assignments[x].astype(int) for x in \
 step0 = pd.DataFrame(step0_assignments, index=assignments.index)
 step0.columns = generic_factors['dcm']
 # read DCA-DCM constraints file
-start_constraints = mp_file.parse(sheet_name="Constraints", header=8)
+start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
+        usecols="A:AF")
 
 # build up custom habitat and water factor tables
 custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
@@ -60,12 +61,12 @@ soft_dcms = ['Tillage', 'Brine', 'Till-Brine', 'Sand Fences']
 soft_idx = [x for x, y in enumerate(generic_factors.index.tolist()) if y in soft_dcms]
 
 # set limits and toggles - MAKE CHANGES HERE
-allow_sand_fences = False
+allow_sand_fences = True
 if not allow_sand_fences:
     start_constraints.loc[:, 'Sand Fences'] = 0
 hard_limit = 3
-soft_limit = 4.5
-habitat_minimum = 0.85 + 0.01
+soft_limit = 3
+habitat_minimum = 0.9 + 0.01
 use_custom_factors = True
 
 # format data for analysis
