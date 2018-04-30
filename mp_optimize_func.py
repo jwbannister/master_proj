@@ -2,9 +2,15 @@ import pandas as pd
 from time import time
 import numpy as np
 
-def evaluate_dca_change(case, previous_case, factors, generic_factors, priority):
-    previous_case_factors = factors.loc[previous_case.name]
-    case_factors = generic_factors.iloc[case.index(1)]
+def evaluate_dca_change(case, previous_case, previous_factors, custom_factors, \
+        generic_factors, priority, dca_idx, dca_info):
+    previous_case_factors = previous_factors.loc[previous_case.name]
+    dca_name = dca_info.iloc[dca_idx].name
+    dcm_name = generic_factors.index.tolist()[case.index(1)]
+    if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors.index.tolist()]:
+       case_factors = custom_factors.loc[dca_name, dcm_name]
+    else:
+       case_factors = generic_factors.iloc[case.index(1)]
     if priority[1]=='water':
         smart = case_factors['water'] - previous_case_factors['water'] <= 0
         benefit1 = previous_case_factors['water'] - case_factors['water']

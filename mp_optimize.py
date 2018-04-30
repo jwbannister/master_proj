@@ -50,9 +50,8 @@ custom_factors = {'base': (), 'dwm': (), 'step0': (), 'mp': ()}
 for x in ['base', 'dwm', 'step0', 'mp']:
     custom_factors[x] = func.build_custom_steps(x, custom_factors, custom_filled)
 for x in ['base', 'dwm', 'step0', 'mp']:
-    custom_factors[x].set_index([custom_factors[x]['dca'], \
-            custom_factors[x]['dcm']], inplace=True)
-    custom_factors[x].drop(['dca', 'dcm', 'step'], axis=1, inplace=True)
+    custom_factors[x] = custom_factors[x].drop('step', axis=1).copy()
+    custom_factors[x].set_index(['dca', 'dcm'], inplace=True)
 # format generic to similar structure to custom
 generic_factors.drop(['dcm', 'step'], axis=1, inplace=True)
 
@@ -114,6 +113,7 @@ for step in range(1, 6):
                 " = " + str(round(new_percent[priority[2]], 3))
         constraints = new_constraints.copy()
         eval_case = new_case.copy()
+
         allowed_cases = []
         for j in range(0, len(constraints)):
             tmp = constraints[j].tolist()
@@ -125,6 +125,7 @@ for step in range(1, 6):
                 a.append(b)
             allowed_cases.append(a)
         n_allowed = [len(x) for x in allowed_cases]
+
         smart_cases = {'soft': [], 'hard': []}
         smartest = {'soft': [], 'hard': []}
         for dca in range(0, len(allowed_cases)):
@@ -133,7 +134,8 @@ for step in range(1, 6):
             dca_assigns = {'soft': [], 'hard': []}
             for case in range(0, len(allowed_cases[dca])):
                 case_eval = func.evaluate_dca_change(allowed_cases[dca][case], \
-                    eval_case.iloc[dca], factors, generic_factors, priority)
+                    eval_case.iloc[dca], factors, custom_factors['mp'], generic_factors, \
+                    priority, dca, dca_info)
                 if allowed_cases[dca][case].index(1) in soft_idx:
                     flag = 'soft'
                 else:
@@ -151,59 +153,61 @@ for step in range(1, 6):
                             in sorted(zip(benefit1[flag], benefit2[flag], \
                             dca_assigns[flag]), key=lambda x: (x[0], x[1]), \
                             reverse=True)][0]
-                smart_cases[flag].append([best, no_change, dca])
+                smart_cases[flag].append(best)
         n_smart = [len(smart_cases[x]) for x in smart_cases]
         for flag in ['soft', 'hard']:
             smartest[flag] = sorted(smart_cases[flag], key=lambda x: (x[0], x[1]), \
                     reverse=True)
+
         soft_nn = 0
         hard_nn = 0
-        best_change = sorted([smartest['soft'][soft_nn][0], \
-                smartest['hard'][hard_nn][0]], key=lambda x: (x[0], x[1]), \
+        best_change = sorted([smartest['soft'][soft_nn], \
+                smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                 reverse=True)[0]
-        while best_change[0] > 0:
-            best_change = sorted([smartest['soft'][soft_nn][0], \
-                    smartest['hard'][hard_nn][0]], key=lambda x: (x[0], x[1]), \
-                    reverse=True)[0]
-            if best_change[0] <= 0:
-                break
-            if best_change[4] == 'soft':
-                if soft_transition + \
-                    dca_info.iloc[best_change[3]]['area_sqmi'] > soft_limit:
-                    soft_nn += 1
-                    continue
+        try:
+            while True:
+                best_change = sorted([smartest['soft'][soft_nn], \
+                        smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
+                        reverse=True)[0]
+                if best_change[4] == 'soft':
+                    if soft_transition + \
+                        dca_info.iloc[best_change[3]]['area_sqmi'] > soft_limit:
+                        soft_nn += 1
+                        continue
+                    else:
+                        soft_transition += dca_info.iloc[best_change[3]]['area_sqmi']
+                        break
                 else:
-                    soft_transition += dca_info.iloc[best_change[3]]['area_sqmi']
-                    break
-            else:
-                if hard_transition + \
-                    dca_info.iloc[best_change[3]]['area_sqmi'] > hard_limit:
-                    hard_nn += 1
-                    continue
-                else:
-                    hard_transition += dca_info.iloc[best_change[3]]['area_sqmi']
-                    break
-        if best_change[0] > 0:
+                    if hard_transition + \
+                        dca_info.iloc[best_change[3]]['area_sqmi'] > hard_limit:
+                        hard_nn += 1
+                        continue
+                    else:
+                        hard_transition += dca_info.iloc[best_change[3]]['area_sqmi']
+                        break
+        except:
+            hard_transition = hard_limit + 1
+            soft_transition = soft_limit + 1
+
+        if hard_transition < hard_limit or soft_transition < soft_limit:
             tracking.append({'dca': dca_info.index.tolist()[best_change[3]],
                     'from': eval_case.columns.tolist()[\
                             eval_case.iloc[best_change[3]].tolist().index(1)],
                     'to': eval_case.columns.tolist()[best_change[2].index(1)]})
-            new_case = eval_case.copy()
-            new_case.iloc[best_change[3]] = np.array(best_change[2])
-            new_constraints = constraints.copy()
-            new_constraints[best_change[3]] = np.array(best_change[2])
-            new_assignments = func.get_assignments(new_case, base.index.tolist(), \
-                    generic_factors.index.tolist())
-            if use_custom_factors:
-                factors = func.build_factor_table(new_assignments, custom_factors, \
-                    generic_factors, 'mp')
-            else:
-                factors = func.build_factor_table(new_assignments, custom_factors, \
-                    generic_factors, 'generic')
-            new_total = factors.multiply(dca_info['area_ac'], axis=0).sum()
-            new_percent = new_total/base_total
+        new_case = eval_case.copy()
+        new_case.iloc[best_change[3]] = np.array(best_change[2])
+        new_constraints = constraints.copy()
+        new_constraints[best_change[3]] = np.array(best_change[2])
+        new_assignments = func.get_assignments(new_case, base.index.tolist(), \
+                generic_factors.index.tolist())
+        if use_custom_factors:
+            factors = func.build_factor_table(new_assignments, custom_factors, \
+                generic_factors, 'mp')
         else:
-            break
+            factors = func.build_factor_table(new_assignments, custom_factors, \
+                generic_factors, 'generic')
+        new_total = factors.multiply(dca_info['area_ac'], axis=0).sum()
+        new_percent = new_total/base_total
         priority = func.prioritize(new_percent, habitat_minimum)
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
             'hard transition': hard_transition, \
