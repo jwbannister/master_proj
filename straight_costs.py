@@ -183,6 +183,9 @@ for step in step_years.step:
         ws.cell(row=i+offset, column=4).value = om_output[i]
         ws.cell(row=i+offset, column=19).value = wd_output[i]
 
+    mp_steps_dcm = pd.concat([mp_steps.replace(hab_dict), \
+            dca_areas['acres']], axis=1)
+    mp_steps_hab = pd.concat([mp_steps, dca_areas['acres']], axis=1)
     # write water demand summary tables
     ws = wb.get_sheet_by_name('Water Use Summary')
     wd_summary_dcm = pd.DataFrame({'wd':mp_steps_wd[step], \
@@ -204,9 +207,6 @@ for step in step_years.step:
         col = step_years.index[step_years.step==step].item()
         ws.cell(row=i+5, column=col+12).value = int(wd_summary_hab[i].round())
 
-    mp_steps_dcm = pd.concat([mp_steps.replace(hab_dict), \
-            dca_areas['acres']], axis=1)
-    mp_steps_hab = pd.concat([mp_steps, dca_areas['acres']], axis=1)
     # write area summary tables
     ws = wb.get_sheet_by_name('Area Summary')
     area_summary_dcm = pd.DataFrame({'acres':mp_steps_dcm['acres'], \
@@ -229,10 +229,10 @@ for step in step_years.step:
         ws.cell(row=i+5, column=col+12).value = int(area_summary_hab[i].round())
 
 ws = wb.get_sheet_by_name('NPV Summary')
-ws.cell(row=18, column=2).value = 'Analysis run on ' + \
-        datetime.datetime.now().strftime('%m-%d-%Y %H:%M')
-ws.cell(row=19, column=2).value = "Data read from Master Project workbook '" + \
+ws.cell(row=18, column=2).value = "Data read from Master Project workbook '" + \
         mp_name + "'"
+ws.cell(row=19, column=2).value = 'NPV Analysis run on ' + \
+        datetime.datetime.now().strftime('%m-%d-%Y %H:%M')
 output_file = file_path + npv_name[:7] + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 wb.save(output_file)

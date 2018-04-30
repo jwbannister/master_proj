@@ -3,14 +3,14 @@ from time import time
 import numpy as np
 
 def evaluate_dca_change(case, previous_case, previous_factors, custom_factors, \
-        generic_factors, priority, dca_idx, dca_info):
+        priority, dca_idx, dca_info):
     previous_case_factors = previous_factors.loc[previous_case.name]
     dca_name = dca_info.iloc[dca_idx].name
-    dcm_name = generic_factors.index.tolist()[case.index(1)]
-    if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors.index.tolist()]:
-       case_factors = custom_factors.loc[dca_name, dcm_name]
+    dcm_name = custom_factors['generic'].index.tolist()[case.index(1)]
+    if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors['mp'].index.tolist()]:
+       case_factors = custom_factors['mp'].loc[dca_name, dcm_name]
     else:
-       case_factors = generic_factors.iloc[case.index(1)]
+       case_factors = custom_factors['generic'].iloc[case.index(1)]
     if priority[1]=='water':
         smart = case_factors['water'] - previous_case_factors['water'] <= 0
         benefit1 = previous_case_factors['water'] - case_factors['water']
@@ -52,43 +52,32 @@ def get_assignments(case, dca_list, dcm_list):
             for index, row in case.iterrows()], index=dca_list, columns=['dcm'])
     return assignments
 
-def build_factor_table(assignments, custom_factors, generic_factors, stp):
+def build_factor_table(assignments, custom_factors, stp):
     factors = pd.DataFrame()
-    for idx in assignments.index.tolist():
-        dcm = assignments.loc[idx]['dcm']
-        if stp == 'generic':
-            tmp = generic_factors.loc[dcm].copy()
-            tmp['dca'] = idx
+    for idx in range(0, len(assignments)):
+        dcm_spot = assignments.iloc[idx].tolist().index(1)
+        dcm_name = custom_factors['generic'].index.tolist()[dcm_spot]
+        dca_name = assignments.index.tolist()[idx]
+        dca_idx = [x for x, y in \
+                enumerate(custom_factors[stp].index.get_level_values('dca')) \
+                if y==dca_name]
+        dcm_idx = [x for x, y in \
+                enumerate(custom_factors[stp].index.get_level_values('dcm')) \
+                if y==dcm_name]
+        custom_idx = [x for x in dca_idx if x in dcm_idx]
+        if len(custom_idx)>0:
+            tmp = custom_factors[stp].iloc[custom_idx].copy()
+            tmp['dca'] = assignments.index.tolist()[idx]
             factors = factors.append(tmp)
         else:
-            dca_idx = [x for x, y in \
-                    enumerate(custom_factors[stp].index.get_level_values('dca')) \
-                    if y==idx]
-            dcm_idx = [x for x, y in \
-                    enumerate(custom_factors[stp].index.get_level_values('dcm')) \
-                    if y==dcm]
-            custom_idx = [x for x in dca_idx if x in dcm_idx]
-            if len(custom_idx)>0:
-                tmp = custom_factors[stp].iloc[custom_idx].copy()
-                tmp['dca'] = idx
-                factors = factors.append(tmp)
-            else:
-                tmp = generic_factors.loc[dcm].copy()
-                tmp['dca'] = idx
-                factors = factors.append(tmp)
+            tmp = custom_factors['generic'].loc[dcm_name].copy()
+            tmp['dca'] = assignments.index.tolist()[idx]
+            factors = factors.append(tmp)
     factors.set_index('dca', inplace=True)
     return factors
 
-def calc_totals(case, custom_factors, generic_factors, step, \
-        use_custom_factors, dca_info):
+def calc_totals(case, custom_factors, step, dca_info):
     dca_list = dca_info.index.tolist()
-    dcm_list = generic_factors.index.tolist()
-    assignments = get_assignments(case, dca_list, dcm_list)
-    if use_custom_factors:
-        factors = build_factor_table(assignments, custom_factors, \
-                generic_factors, step)
-    else:
-        factors = build_factor_table(assignments, custom_factors, \
-                generic_factors, 'generic')
-    return factors.multiply(dca_info['area_ac'], axis=0).sum()
+    factors = build_factor_table(case, custom_factors, step)
+    return factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
