@@ -1,13 +1,16 @@
 #!/usr/bin/env python
+
 import pandas as pd
 import numpy as np
-#import csv
-import datetime
-#from itertools import product
-import types
 from openpyxl import load_workbook
+import csv
+import datetime
+from itertools import product
+import types
+#import openpyxl
 from openpyxl import worksheet
 from openpyxl.utils import range_boundaries
+
 
 def patch_worksheet():
     """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
@@ -59,7 +62,7 @@ patch_worksheet()
 # path for excel files
 file_path = "/home/john/airsci/owens/Master Project & Cost Benefit/"
 npv_name = "MP NPV TEMPLATE.xlsx"
-mp_name = "MP Workbook JWB 04-25-2018.xlsx"
+mp_name = "MP Workbook JWB 04-27-2018.xlsx"
 
 # read reference tables from NPY Calculation workbook
 input_file = pd.ExcelFile(file_path + npv_name)
@@ -78,26 +81,37 @@ hab2dcm = input_file.parse(sheet_name="Script Input", header=0, \
         usecols="J,K,L,M").dropna(how='any')
 hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
 
-# read data from Master Project workbook
+# read data from John Dickey's workbook
 mp_file = pd.ExcelFile(file_path + mp_name)
 # MP implementation schedule
-mp_new_columns = ["dca", "acres", "sqmi", "base", "dwm", "step0", "step5", \
-        "mp_step", "base_wd", "dwm_wd", "step0_wd", "step5_wd"]
+mp_new_names = ["dca", "acres", "dcm_base", "dcm_dwm", "dcm_step0", \
+        "dcm_step5", "mp_step"]
 mp_new = mp_file.parse(sheet_name="MP_new", header=24, \
-        usecols="A,B,C,D,E,F,G,H,W,AK,AY,BM", names=mp_new_columns, \
+        usecols="A,B,D,E,F,G,H", names=mp_new_names, \
         converters={'Step':int}).dropna(how='any')
-mp_new.set_index('dca', inplace=True)
+# pull water demand by DCA (in acre-ft/year)
+mp_new_wd = mp_file.parse(sheet_name="MP_new", header=24, \
+        usecols="A,H,W,AK,AY,BM", converters={'Step':int}, \
+        names=[mp_new_names[i] for i in [0, 6, 2, 3, 4, 5]]).dropna(how='any')
 
+# get dca areas
+dca_areas = mp_new[['dca', 'acres']].copy().set_index('dca')
+dca_areas['miles'] = dca_areas['acres'] * 0.0015625
+
+mp_steps = mp_new.copy()
+mp_steps_wd = mp_new_wd.copy()
 # expand data to show all steps in Master Project
-for n in ['1', '2', '3', '4']:
-    obj['step' + n] = ['X'] * len(obj)
-    for i in obj.index:
-        if obj.loc[i, 'mp_step'] > int(n):
-            obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step0']
-        else:
-            obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step5']
-obj.drop(columns=[s for s in obj.columns if 'dcm' not in s], inplace=True)
-obj.columns=[s[4:] for s in obj.columns]
+for obj in [mp_steps, mp_steps_wd]:
+    obj.set_index('dca', inplace=True)
+    for n in ['1', '2', '3', '4']:
+        obj['dcm_step' + n] = ['X'] * len(obj)
+        for i in obj.index:
+            if obj.loc[i, 'mp_step'] > int(n):
+                obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step0']
+            else:
+                obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step5']
+    obj.drop(columns=[s for s in obj.columns if 'dcm' not in s], inplace=True)
+    obj.columns=[s[4:] for s in obj.columns]
 
 mp_years = mp_steps.copy()
 mp_years_wd = mp_steps_wd.copy()
