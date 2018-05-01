@@ -13,53 +13,47 @@ file_name = "MP Workbook JWB 04-27-2018.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
 # generate habitat and water duty factor tables
-generic_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
+dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
         usecols="A,C,D,E,F,G,H", \
         names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])
-generic_factors['step'] = ['generic'] * len(generic_factors)
-generic_factors.set_index('dcm', drop=False, inplace=True)
+dcm_factors.set_index('dcm', inplace=True)
 # build up custom habitat and water factor tables
 custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
         usecols="A,B,C,D,E,F,G,H,I", \
         names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
+custom_info.set_index(['dca', 'dcm'], inplace=True)
 custom_filled = custom_info.apply(func.backfill, axis=1, \
-        backfill_factors=generic_factors)
-custom_factors = {'base': (), 'dwm': (), 'step0': (), 'mp': (), 'generic':()}
-for x in ['base', 'dwm', 'step0', 'mp']:
-    custom_factors[x] = func.build_custom_steps(x, custom_factors, custom_filled)
-for x in ['base', 'dwm', 'step0', 'mp']:
-    custom_factors[x] = custom_factors[x].drop('step', axis=1).copy()
-    custom_factors[x].set_index(['dca', 'dcm'], inplace=True)
-# format generic to similar structure to custom
-generic_factors.drop(['dcm', 'step'], axis=1, inplace=True)
-custom_factors['generic'] = generic_factors.copy()
+        backfill_data=dcm_factors, \
+        columns_list=['bw', 'mw', 'pl', 'ms', 'md', 'water'])
+custom_steps = ['base', 'dwm', 'step0', 'mp']
+factors = {x: func.build_custom_steps(x, custom_steps, custom_filled) \
+        for x in custom_steps}
+factors['dcm'] = dcm_factors.copy()
 
 dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=25, \
         usecols="A,B,C,D,F", \
         names=["dca", "area_ac", "area_sqmi", "base", "step0"])
 dca_info.set_index('dca', inplace=True)
 
-# base case
-base_assignments = [pd.Series(custom_factors['generic'].index.get_level_values('dcm')) \
-        == dca_info.base[x] for x in range(0, len(dca_info))]
-base_assignments = [base_assignments[x].astype(int) for x in \
-        range(0, len(base_assignments))]
-base = pd.DataFrame(base_assignments, index=assignments.index)
-base.columns = custom_factors['generic'].index.tolist()
-# step 0
-step0_assignments = [pd.Series(custom_factors['generic'].index.get_level_values('dcm')) \
-        == dca_info.step0[x] for x in range(0, len(dca_info))]
-step0_assignments = [step0_assignments[x].astype(int) for x in \
-        range(0, len(step0_assignments))]
-step0 = pd.DataFrame(step0_assignments, index=assignments.index)
-step0.columns = custom_factors['generic'].index.tolist()
+# known cases
+lake_case = {'base': [], 'step0': []}
+for case in lake_case.keys():
+    assignments = [np.array(factors['dcm'].index.get_level_values('dcm')) \
+            == dca_info[case][x] for x in range(0, len(dca_info))]
+    assignments = [assignments[x].astype(int).tolist() \
+            for x in range(0, len(assignments))]
+    case_df = pd.DataFrame(assignments)
+    case_df.index = dca_info.index
+    case_df.columns = factors['dcm'].index.tolist()
+    lake_case[case] = case_df
+
 # read DCA-DCM constraints file
 start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
         usecols="A:AF")
 
 # define "soft" transition DCMs
 soft_dcms = ['Tillage', 'Brine', 'Till-Brine', 'Sand Fences']
-soft_idx = [x for x, y in enumerate(custom_factors['generic'].index.tolist()) if y in soft_dcms]
+soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
 
 # set limits and toggles - MAKE CHANGES HERE
 allow_sand_fences = True
@@ -69,28 +63,25 @@ hard_limit = 3
 soft_limit = 3
 habitat_minimum = 0.9 + 0.01
 
-# format data for analysis
-base_case = base.copy()
-start_case = step0.copy()
-
-base_total = func.calc_totals(base_case, custom_factors, 'base', dca_info)
-start_total = func.calc_totals(start_case, custom_factors, 'step0', dca_info)
-start_percent = start_total/base_total
+total = {}
+for case in lake_case.keys():
+    total[case] = func.calc_totals(lake_case[case], factors, case, dca_info)
 
 # initialize ariables before loop - DO NOT MAKE CHANGES HERE
-new_constraints = np.array(start_constraints).copy()
-new_case = start_case.copy()
-new_assignments = func.get_assignments(new_case, base.index.tolist(), \
-        custom_factors['generic'].index.tolist())
-factors = func.build_factor_table(new_case, custom_factors, 'mp')
-new_percent = start_percent.copy()
-new_total = start_total.copy()
+dcm_list = factors['dcm'].index.tolist()
+dca_list = lake_case['base'].index.get_level_values('dca').tolist()
+new_constraints = start_constraints.copy()
+new_case = lake_case['step0'].copy()
+new_assignments = func.get_assignments(new_case, dca_list, dcm_list)
+case_factors = func.build_case_factors(new_case, factors, 'mp')
+new_percent = total['step0']/total['base']
+new_total = total['step0'].copy()
 step_info = {}
 tracking = []
 hard_transition = 0
 soft_transition = 0
 # set priorities for initial change
-priority = func.prioritize(start_percent, habitat_minimum)
+priority = func.prioritize(new_percent, habitat_minimum)
 step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard transition': hard_transition, \
         'soft_transition': soft_transition, 'changes': tracking, \
@@ -110,7 +101,7 @@ for step in range(1, 6):
 
         allowed_cases = []
         for dca in range(0, len(constraints)):
-            tmp = constraints[dca].tolist()
+            tmp = constraints.iloc[dca].tolist()
             tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
             a = []
             for dcm in tmp_ind:
@@ -128,7 +119,7 @@ for step in range(1, 6):
             dca_assigns = {'soft': [], 'hard': []}
             for case in range(0, len(allowed_cases[dca])):
                 case_eval = func.evaluate_dca_change(allowed_cases[dca][case], \
-                    eval_case.iloc[dca], factors, custom_factors, \
+                    eval_case.iloc[dca], case_factors, factors, \
                     priority, dca, dca_info)
                 if allowed_cases[dca][case].index(1) in soft_idx:
                     flag = 'soft'
@@ -191,18 +182,17 @@ for step in range(1, 6):
         new_case = eval_case.copy()
         new_case.iloc[best_change[3]] = np.array(best_change[2])
         new_constraints = constraints.copy()
-        new_constraints[best_change[3]] = np.array(best_change[2])
-        new_assignments = func.get_assignments(new_case, base.index.tolist(), \
-                generic_factors.index.tolist())
-        factors = func.build_factor_table(new_case, custom_factors, 'mp')
-        new_total = factors.multiply(dca_info['area_ac'], axis=0).sum()
-        new_percent = new_total/base_total
+        new_constraints.iloc[best_change[3]] = np.array(best_change[2])
+        new_assignments = func.get_assignments(new_case, dca_list, dcm_list)
+        case_factors = func.build_case_factors(new_case, factors, 'mp')
+        new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
+        new_percent = new_total/total['base']
         priority = func.prioritize(new_percent, habitat_minimum)
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
             'hard transition': hard_transition, \
             'soft_transition': soft_transition, 'changes': tracking, \
             'assignments': new_assignments}
-total_water_savings = base_total['water'] - new_total['water']
+total_water_savings = total['base']['water'] - new_total['water']
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 if allow_sand_fences:
