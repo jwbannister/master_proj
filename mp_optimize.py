@@ -58,46 +58,55 @@ soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_
 # read limits and toggles
 script_input = mp_file.parse(sheet_name="Script Input", header=None, \
         usecols="B")[0].tolist()
-allow_sand_fences = bool(script_input[0])
-if not allow_sand_fences:
-    start_constraints.loc[:, 'Sand Fences'] = 0
-hard_limit = script_input[1]
-soft_limit = script_input[2]
-habitat_minimum = script_input[3] + 0.01
+hard_limit = script_input[0]
+soft_limit = script_input[1]
+habitat_minimum = script_input[2] + 0.01
+dcm_limits = {}
+dcm_limits['Brine'] = script_input[3]
+dcm_limits['Sand Fences'] = script_input[4]
 
+dcm_list = factors['dcm'].index.tolist()
+dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 total = {}
 for case in lake_case.keys():
     total[case] = func.calc_totals(lake_case[case], factors, case, dca_info)
 step_info = {}
 step_info['base'] = {'totals': total['base'],
         'percent_base': total['base']/total['base'], \
-        'hard_transition': 0, 'soft_transition': 0, 'changes': [], \
+        'hard_transition': 0, 'soft_transition': 0, \
         'assignments': func.get_assignments(lake_case['base'], dca_list, dcm_list)}
 
 # initialize ariables before loop - DO NOT MAKE CHANGES HERE
-dcm_list = factors['dcm'].index.tolist()
-dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 new_constraints = start_constraints.copy()
 new_case = lake_case['step0'].copy()
 new_assignments = func.get_assignments(new_case, dca_list, dcm_list)
 case_factors = func.build_case_factors(new_case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
-tracking = []
+tracking = pd.DataFrame.from_items([('step', []), ('dca', []), ('from', []), \
+        ('to', []), ('bw', []), ('mw', []), ('pl', []), ('ms', []), ('md', []), \
+        ('water', []), ('hard', []), ('soft', []), ('brine', []), ('sand_fences', [])])
+tracking.index.name = 'change'
 hard_transition = 0
 soft_transition = 0
+dcm_area_tracking = {}
+sand_fence_dcas = [x for x, y in enumerate(new_case['Sand Fences']) if y ==1]
+sand_fence_area = sum([dca_info['area_sqmi'][x] for x in sand_fence_dcas])
+dcm_area_tracking['Sand Fences'] = sand_fence_area
 # set priorities for initial change
 priority = func.prioritize(new_percent, habitat_minimum)
 step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard_transition': hard_transition, \
-        'soft_transition': soft_transition, 'changes': tracking, \
+        'soft_transition': soft_transition, \
         'assignments': new_assignments}
 for step in range(1, 6):
     print 'step ' + str(step)
     hard_transition = 0
     soft_transition = 0
-    tracking = []
+    dcm_area_tracking['Brine'] = 0
+    change_counter = 0
     while hard_transition < hard_limit or soft_transition < soft_limit:
+        change_counter += 1
         print "hard = " + str(round(hard_transition, 2)) + ", soft = " +\
                 str(round(soft_transition, 2)) + ", " + str(priority[1]) + " = " +\
                 str(round(new_percent[priority[1]], 3)) + ", " + str(priority[2]) +\
@@ -155,17 +164,29 @@ for step in range(1, 6):
         best_change = sorted([smartest['soft'][soft_nn], \
                 smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                 reverse=True)[0]
+        nxt = False
         try:
             while True:
                 best_change = sorted([smartest['soft'][soft_nn], \
                         smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                         reverse=True)[0]
+                dcm_type = dcm_list[best_change[2].index(1)]
+                if dcm_type in dcm_limits.keys():
+                    if dca_info.iloc[best_change[3]]['area_sqmi'] + \
+                            dcm_area_tracking[dcm_type] > dcm_limits[dcm_type]:
+                        soft_nn += 1
+                        print lim + " area exceeded!"
+                        continue
                 if best_change[4] == 'soft':
                     if soft_transition + \
                         dca_info.iloc[best_change[3]]['area_sqmi'] > soft_limit:
                         soft_nn += 1
                         continue
                     else:
+                        for lim in dcm_limits.keys():
+                            if dcm_list[best_change[2].index(1)] == lim:
+                                dcm_area_tracking[lim] += \
+                                        dca_info.iloc[best_change[3]]['area_sqmi']
                         soft_transition += dca_info.iloc[best_change[3]]['area_sqmi']
                         break
                 else:
@@ -178,17 +199,10 @@ for step in range(1, 6):
                         break
         except:
             break
-#            hard_transition = hard_limit + 1
-#            soft_transition = soft_limit + 1
 
         if best_change[0] <= 0:
             break
 
-        if hard_transition < hard_limit or soft_transition < soft_limit:
-            tracking.append({'dca': dca_info.index.tolist()[best_change[3]],
-                    'from': eval_case.columns.tolist()[\
-                            eval_case.iloc[best_change[3]].tolist().index(1)],
-                    'to': eval_case.columns.tolist()[best_change[2].index(1)]})
         new_case = eval_case.copy()
         new_case.iloc[best_change[3]] = np.array(best_change[2])
         new_constraints = constraints.copy()
@@ -198,24 +212,31 @@ for step in range(1, 6):
         new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/total['base']
         priority = func.prioritize(new_percent, habitat_minimum)
+        change = pd.Series({'step': step, \
+                'dca': dca_info.index.tolist()[best_change[3]], \
+                'from': eval_case.columns.tolist()[\
+                            eval_case.iloc[best_change[3]].tolist().index(1)],
+                'to': eval_case.columns.tolist()[best_change[2].index(1)],
+                'hard': hard_transition, \
+                'soft': soft_transition,
+                'brine': dcm_area_tracking['Brine'],
+                'sand_fences': dcm_area_tracking['Sand Fences']})
+        change = change.append(new_percent)
+        change.name = change_counter
+        tracking = tracking.append(change)
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
-            'hard_transition': hard_transition, \
-            'soft_transition': soft_transition, 'changes': tracking, \
+            'hard': hard_transition, \
+            'soft': soft_transition, \
             'assignments': new_assignments}
 total_water_savings = total['base']['water'] - new_total['water']
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
-if allow_sand_fences:
-    print "Use of Sand Fences for dust control was allowed."
-else:
-    print "Use of Sand Fences for dust control was not allowed."
 assignment_output = new_assignments.copy()
 assignment_output['step'] = 0
 for i in range(1, 6):
-    changes = [x['dca'] for x in step_info[i]['changes']]
+    changes = [x for x in tracking.loc[i]['dca']]
     flag = [x in changes for x in assignment_output.index.tolist()]
     assignment_output.loc[flag, 'step'] = i
-assignment_output.to_csv("/home/john/Desktop/mp_optimal_assignments.csv")
 
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
@@ -229,10 +250,16 @@ for j in ['base', 0, 1, 2, 3, 4, 5]:
     for k in range(2, 8):
         ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
         if rw > 4:
-            ws.cell(row=rw, column=8).value = step_info[j]['hard_transition']
-            ws.cell(row=rw, column=9).value = step_info[j]['soft_transition']
+            ws.cell(row=rw, column=8).value = step_info[j]['hard']
+            ws.cell(row=rw, column=9).value = step_info[j]['soft']
     rw += 1
 output_file = file_path + file_name[:12] + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 wb.save(output_file)
+book = load_workbook(filename=output_file)
+writer = pd.ExcelWriter(output_file, engine = 'openpyxl')
+writer.book = book
+writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
+tracking.to_excel(writer, sheet_name='Script Output')
+writer.save()
 
