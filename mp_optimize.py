@@ -1,15 +1,13 @@
 import pandas as pd
 import numpy as np
-import itertools as it
-import csv
-from multiprocessing import Pool
+import datetime
+from openpyxl import worksheet
+from openpyxl import load_workbook
 import mp_optimize_func as func
-from time import time
-from collections import Counter
 
 # read data from original Master Project planning workbook
 file_path = "/home/john/airsci/owens/Master Project & Cost Benefit/"
-file_name = "MP Workbook JWB 04-27-2018.xlsx"
+file_name = "MP Workbook LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
 # generate habitat and water duty factor tables
@@ -30,7 +28,7 @@ factors = {x: func.build_custom_steps(x, custom_steps, custom_filled) \
         for x in custom_steps}
 factors['dcm'] = dcm_factors.copy()
 
-dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=25, \
+dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
         usecols="A,B,C,D,F", \
         names=["dca", "area_ac", "area_sqmi", "base", "step0"])
 dca_info.set_index('dca', inplace=True)
@@ -52,20 +50,29 @@ start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
         usecols="A:AF")
 
 # define "soft" transition DCMs
+soft_dcm_input = mp_file.parse(sheet_name="Script Input", header=None, \
+        usecols="G")[0].tolist()
 soft_dcms = ['Tillage', 'Brine', 'Till-Brine', 'Sand Fences']
 soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
 
-# set limits and toggles - MAKE CHANGES HERE
-allow_sand_fences = True
+# read limits and toggles
+script_input = mp_file.parse(sheet_name="Script Input", header=None, \
+        usecols="B")[0].tolist()
+allow_sand_fences = bool(script_input[0])
 if not allow_sand_fences:
     start_constraints.loc[:, 'Sand Fences'] = 0
-hard_limit = 3
-soft_limit = 3
-habitat_minimum = 0.9 + 0.01
+hard_limit = script_input[1]
+soft_limit = script_input[2]
+habitat_minimum = script_input[3] + 0.01
 
 total = {}
 for case in lake_case.keys():
     total[case] = func.calc_totals(lake_case[case], factors, case, dca_info)
+step_info = {}
+step_info['base'] = {'totals': total['base'],
+        'percent_base': total['base']/total['base'], \
+        'hard_transition': 0, 'soft_transition': 0, 'changes': [], \
+        'assignments': func.get_assignments(lake_case['base'], dca_list, dcm_list)}
 
 # initialize ariables before loop - DO NOT MAKE CHANGES HERE
 dcm_list = factors['dcm'].index.tolist()
@@ -76,14 +83,13 @@ new_assignments = func.get_assignments(new_case, dca_list, dcm_list)
 case_factors = func.build_case_factors(new_case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
-step_info = {}
 tracking = []
 hard_transition = 0
 soft_transition = 0
 # set priorities for initial change
 priority = func.prioritize(new_percent, habitat_minimum)
 step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
-        'hard transition': hard_transition, \
+        'hard_transition': hard_transition, \
         'soft_transition': soft_transition, 'changes': tracking, \
         'assignments': new_assignments}
 for step in range(1, 6):
@@ -171,8 +177,12 @@ for step in range(1, 6):
                         hard_transition += dca_info.iloc[best_change[3]]['area_sqmi']
                         break
         except:
-            hard_transition = hard_limit + 1
-            soft_transition = soft_limit + 1
+            break
+#            hard_transition = hard_limit + 1
+#            soft_transition = soft_limit + 1
+
+        if best_change[0] <= 0:
+            break
 
         if hard_transition < hard_limit or soft_transition < soft_limit:
             tracking.append({'dca': dca_info.index.tolist()[best_change[3]],
@@ -189,7 +199,7 @@ for step in range(1, 6):
         new_percent = new_total/total['base']
         priority = func.prioritize(new_percent, habitat_minimum)
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
-            'hard transition': hard_transition, \
+            'hard_transition': hard_transition, \
             'soft_transition': soft_transition, 'changes': tracking, \
             'assignments': new_assignments}
 total_water_savings = total['base']['water'] - new_total['water']
@@ -206,4 +216,23 @@ for i in range(1, 6):
     flag = [x in changes for x in assignment_output.index.tolist()]
     assignment_output.loc[flag, 'step'] = i
 assignment_output.to_csv("/home/john/Desktop/mp_optimal_assignments.csv")
+
+# write results into output workbook
+wb = load_workbook(filename = file_path + file_name)
+ws = wb['MP_new']
+for i in range(0, len(assignment_output), 1):
+    offset = 22
+    ws.cell(row=i+offset, column=7).value = assignment_output['dcm'][i]
+    ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
+rw = 3
+for j in ['base', 0, 1, 2, 3, 4, 5]:
+    for k in range(2, 8):
+        ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
+        if rw > 4:
+            ws.cell(row=rw, column=8).value = step_info[j]['hard_transition']
+            ws.cell(row=rw, column=9).value = step_info[j]['soft_transition']
+    rw += 1
+output_file = file_path + file_name[:12] + \
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
+wb.save(output_file)
 
