@@ -1,12 +1,100 @@
+#! /usr/bin/env python
 import pandas as pd
 import numpy as np
 import datetime
+import os
 from openpyxl import worksheet
 from openpyxl import load_workbook
-import mp_optimize_func as func
+
+def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
+        priority, dca_idx, dca_info):
+    previous_case_factors = previous_factors.loc[previous_case.name]
+    dca_name = dca_info.iloc[dca_idx].name
+    dcm_name = custom_factors['dcm'].index.tolist()[dca_case.index(1)]
+    if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors['mp'].index.tolist()]:
+       case_factors = custom_factors['mp'].loc[dca_name, dcm_name]
+    else:
+       case_factors = custom_factors['dcm'].iloc[dca_case.index(1)]
+    if priority[1]=='water':
+        smart = case_factors['water'] - previous_case_factors['water'] < 0
+        benefit1 = previous_case_factors['water'] - case_factors['water']
+        benefit2 = case_factors[priority[2]] - previous_case_factors[priority[2]]
+    else:
+        smart = case_factors[priority[1]] - previous_case_factors[priority[1]] > 0
+        benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
+        benefit2 = previous_case_factors['water'] - case_factors['water']
+    return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
+
+def prioritize(value_percents, minimum_hab):
+    if any([x < minimum_hab for x in value_percents[0:5]]):
+        return {1: value_percents[0:5].idxmin(), 2: 'water'}
+    else:
+        return {1: 'water', 2: value_percents[0:5].idxmin()}
+
+def backfill(row, backfill_data, columns_list):
+    """
+    row = Series with index of columns_list and name (X, Y) where Y = backfill_factors.index
+    backfill_factors = DataFrame with all columns_list columns
+    columns_list = list
+    """
+    for col in columns_list:
+        if np.isnan(row[col]):
+            row[col] = backfill_data.loc[row.name[1], col]
+    return row
+
+def build_custom_steps(step, step_list, data):
+    """
+    step = string
+    step_list = list
+    data = DataFrame with column 'step'
+    """
+    factors = data.loc[data['step']==step_list[0], :].copy()
+    sub_steps = [step_list[x] for x in range(1, step_list.index(step)+1)]
+    for sub in sub_steps:
+        sub_df = data.loc[data['step']==sub, :].copy()
+        for idx in factors.index:
+            if idx in sub_df.index:
+                factors.drop(idx, inplace=True)
+        factors = factors.append(sub_df)
+    factors.drop('step', axis=1, inplace=True)
+    return factors
+
+def get_assignments(case, dca_list, dcm_list):
+    assignments = pd.DataFrame([dcm_list[row.tolist().index(1)] \
+            for index, row in case.iterrows()], index=dca_list, columns=['dcm'])
+    return assignments
+
+def build_case_factors(lake_case, custom_factors, stp):
+    factors = pd.DataFrame()
+    for idx in range(0, len(lake_case)):
+        dca_name = lake_case.iloc[idx].name
+        dca_case = lake_case.iloc[idx]
+        dcm_name = dca_case[dca_case==1].index[0]
+        dca_idx = [x for x, y in \
+                enumerate(custom_factors[stp].index.get_level_values('dca')) \
+                if y==dca_name]
+        dcm_idx = [x for x, y in \
+                enumerate(custom_factors[stp].index.get_level_values('dcm')) \
+                if y==dcm_name]
+        custom_idx = [x for x in dca_idx if x in dcm_idx]
+        if len(custom_idx)>0:
+            tmp = custom_factors[stp].iloc[custom_idx].copy()
+            tmp['dca'] = lake_case.index.tolist()[idx]
+            factors = factors.append(tmp)
+        else:
+            tmp = custom_factors['dcm'].loc[dcm_name].copy()
+            tmp['dca'] = lake_case.index.tolist()[idx]
+            factors = factors.append(tmp)
+    factors.set_index('dca', inplace=True)
+    return factors
+
+def calc_totals(case, custom_factors, step, dca_info):
+    dca_list = dca_info.index.tolist()
+    factors = build_case_factors(case, custom_factors, step)
+    return factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
 # read data from original Master Project planning workbook
-file_path = "/home/john/airsci/owens/Master Project & Cost Benefit/"
+file_path = os.path.realpath(os.getcwd()) + "/"
 file_name = "MP Workbook LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
@@ -20,11 +108,11 @@ custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
         usecols="A,B,C,D,E,F,G,H,I", \
         names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
 custom_info.set_index(['dca', 'dcm'], inplace=True)
-custom_filled = custom_info.apply(func.backfill, axis=1, \
+custom_filled = custom_info.apply(backfill, axis=1, \
         backfill_data=dcm_factors, \
         columns_list=['bw', 'mw', 'pl', 'ms', 'md', 'water'])
 custom_steps = ['base', 'dwm', 'step0', 'mp']
-factors = {x: func.build_custom_steps(x, custom_steps, custom_filled) \
+factors = {x: build_custom_steps(x, custom_steps, custom_filled) \
         for x in custom_steps}
 factors['dcm'] = dcm_factors.copy()
 
@@ -50,14 +138,14 @@ start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
         usecols="A:AF")
 
 # define "soft" transition DCMs
-soft_dcm_input = mp_file.parse(sheet_name="Script Input", header=None, \
-        usecols="G")[0].tolist()
-soft_dcms = ['Tillage', 'Brine', 'Till-Brine', 'Sand Fences']
+soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=6, \
+        usecols="L").iloc[:, 0].tolist()
+soft_dcms = [x for x in soft_dcm_input if x !=0]
 soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
 
 # read limits and toggles
-script_input = mp_file.parse(sheet_name="Script Input", header=None, \
-        usecols="B")[0].tolist()
+script_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="M")[0].tolist()
 hard_limit = script_input[0]
 soft_limit = script_input[1]
 habitat_minimum = script_input[2] + 0.01
@@ -69,18 +157,18 @@ dcm_list = factors['dcm'].index.tolist()
 dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 total = {}
 for case in lake_case.keys():
-    total[case] = func.calc_totals(lake_case[case], factors, case, dca_info)
+    total[case] = calc_totals(lake_case[case], factors, case, dca_info)
 step_info = {}
 step_info['base'] = {'totals': total['base'],
         'percent_base': total['base']/total['base'], \
         'hard_transition': 0, 'soft_transition': 0, \
-        'assignments': func.get_assignments(lake_case['base'], dca_list, dcm_list)}
+        'assignments': get_assignments(lake_case['base'], dca_list, dcm_list)}
 
 # initialize ariables before loop - DO NOT MAKE CHANGES HERE
 new_constraints = start_constraints.copy()
 new_case = lake_case['step0'].copy()
-new_assignments = func.get_assignments(new_case, dca_list, dcm_list)
-case_factors = func.build_case_factors(new_case, factors, 'mp')
+new_assignments = get_assignments(new_case, dca_list, dcm_list)
+case_factors = build_case_factors(new_case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
 tracking = pd.DataFrame.from_items([('step', []), ('dca', []), ('from', []), \
@@ -94,17 +182,17 @@ sand_fence_dcas = [x for x, y in enumerate(new_case['Sand Fences']) if y ==1]
 sand_fence_area = sum([dca_info['area_sqmi'][x] for x in sand_fence_dcas])
 dcm_area_tracking['Sand Fences'] = sand_fence_area
 # set priorities for initial change
-priority = func.prioritize(new_percent, habitat_minimum)
+priority = prioritize(new_percent, habitat_minimum)
 step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard_transition': hard_transition, \
         'soft_transition': soft_transition, \
         'assignments': new_assignments}
+change_counter = 0
 for step in range(1, 6):
     print 'step ' + str(step)
     hard_transition = 0
     soft_transition = 0
     dcm_area_tracking['Brine'] = 0
-    change_counter = 0
     while hard_transition < hard_limit or soft_transition < soft_limit:
         change_counter += 1
         print "hard = " + str(round(hard_transition, 2)) + ", soft = " +\
@@ -133,7 +221,7 @@ for step in range(1, 6):
             benefit2 = {'soft': [], 'hard': []}
             dca_assigns = {'soft': [], 'hard': []}
             for case in range(0, len(allowed_cases[dca])):
-                case_eval = func.evaluate_dca_change(allowed_cases[dca][case], \
+                case_eval = evaluate_dca_change(allowed_cases[dca][case], \
                     eval_case.iloc[dca], case_factors, factors, \
                     priority, dca, dca_info)
                 if allowed_cases[dca][case].index(1) in soft_idx:
@@ -164,7 +252,6 @@ for step in range(1, 6):
         best_change = sorted([smartest['soft'][soft_nn], \
                 smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                 reverse=True)[0]
-        nxt = False
         try:
             while True:
                 best_change = sorted([smartest['soft'][soft_nn], \
@@ -207,11 +294,11 @@ for step in range(1, 6):
         new_case.iloc[best_change[3]] = np.array(best_change[2])
         new_constraints = constraints.copy()
         new_constraints.iloc[best_change[3]] = np.array(best_change[2])
-        new_assignments = func.get_assignments(new_case, dca_list, dcm_list)
-        case_factors = func.build_case_factors(new_case, factors, 'mp')
+        new_assignments = get_assignments(new_case, dca_list, dcm_list)
+        case_factors = build_case_factors(new_case, factors, 'mp')
         new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/total['base']
-        priority = func.prioritize(new_percent, habitat_minimum)
+        priority = prioritize(new_percent, habitat_minimum)
         change = pd.Series({'step': step, \
                 'dca': dca_info.index.tolist()[best_change[3]], \
                 'from': eval_case.columns.tolist()[\
@@ -234,30 +321,33 @@ print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 assignment_output = new_assignments.copy()
 assignment_output['step'] = 0
 for i in range(1, 6):
-    changes = [x for x in tracking.loc[i]['dca']]
+    changes = [x for x in tracking.loc[tracking['step']==i, 'dca']]
     flag = [x in changes for x in assignment_output.index.tolist()]
     assignment_output.loc[flag, 'step'] = i
+assignment_output['step0'] = (get_assignments(lake_case['base'], dca_list, dcm_list))
+assignment_output.columns = ['mp', 'step', 'step0']
+assignment_output.index.name = 'dca'
+output_csv = file_path + "output/mp_steps " + \
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
+assignment_output.to_csv(output_csv)
 
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
 ws = wb['MP_new']
 for i in range(0, len(assignment_output), 1):
     offset = 22
-    ws.cell(row=i+offset, column=7).value = assignment_output['dcm'][i]
+    ws.cell(row=i+offset, column=7).value = assignment_output['mp'][i]
     ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
 rw = 3
 for j in ['base', 0, 1, 2, 3, 4, 5]:
     for k in range(2, 8):
         ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
-        if rw > 4:
-            ws.cell(row=rw, column=8).value = step_info[j]['hard']
-            ws.cell(row=rw, column=9).value = step_info[j]['soft']
     rw += 1
-output_file = file_path + file_name[:12] + \
+output_excel = file_path + "output/" +file_name[:12] + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
-wb.save(output_file)
-book = load_workbook(filename=output_file)
-writer = pd.ExcelWriter(output_file, engine = 'openpyxl')
+wb.save(output_excel)
+book = load_workbook(filename=output_excel)
+writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 tracking.to_excel(writer, sheet_name='Script Output')
