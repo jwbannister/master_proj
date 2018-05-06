@@ -7,7 +7,7 @@ from openpyxl import worksheet
 from openpyxl import load_workbook
 
 def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
-        priority, dca_idx, dca_info):
+        priority, dca_idx, dca_info, waterless_preferences):
     previous_case_factors = previous_factors.loc[previous_case.name]
     dca_name = dca_info.iloc[dca_idx].name
     dcm_name = custom_factors['dcm'].index.tolist()[dca_case.index(1)]
@@ -18,7 +18,10 @@ def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factor
     if priority[1]=='water':
         smart = case_factors['water'] - previous_case_factors['water'] < 0
         benefit1 = previous_case_factors['water'] - case_factors['water']
-        benefit2 = case_factors[priority[2]] - previous_case_factors[priority[2]]
+        try:
+            benefit2 = waterless_preferences[dcm_name]
+        except:
+            benefit2 = -6
     else:
         smart = case_factors[priority[1]] - previous_case_factors[priority[1]] > 0
         benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
@@ -139,19 +142,24 @@ start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
 
 # define "soft" transition DCMs
 soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=6, \
-        usecols="L").iloc[:, 0].tolist()
-soft_dcms = [x for x in soft_dcm_input if x !=0]
+        usecols="K").iloc[:, 0].tolist()
+soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
 soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
 
 # read limits and toggles
 script_input = mp_file.parse(sheet_name="MP_new", header=None, \
-        usecols="M")[0].tolist()
+        usecols="L")[0].tolist()
 hard_limit = script_input[0]
 soft_limit = script_input[1]
 habitat_minimum = script_input[2] + 0.01
 dcm_limits = {}
 dcm_limits['Brine'] = script_input[3]
 dcm_limits['Sand Fences'] = script_input[4]
+
+# read and set preferences for waterless DCMs
+pref_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="M")[0].tolist()[6:11]
+pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
 
 dcm_list = factors['dcm'].index.tolist()
 dca_list = lake_case['base'].index.get_level_values('dca').tolist()
@@ -223,7 +231,7 @@ for step in range(1, 6):
             for case in range(0, len(allowed_cases[dca])):
                 case_eval = evaluate_dca_change(allowed_cases[dca][case], \
                     eval_case.iloc[dca], case_factors, factors, \
-                    priority, dca, dca_info)
+                    priority, dca, dca_info, pref_dict)
                 if allowed_cases[dca][case].index(1) in soft_idx:
                     flag = 'soft'
                 else:
