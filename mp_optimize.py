@@ -332,12 +332,27 @@ for i in range(1, 6):
     changes = [x for x in tracking.loc[tracking['step']==i, 'dca']]
     flag = [x in changes for x in assignment_output.index.tolist()]
     assignment_output.loc[flag, 'step'] = i
-assignment_output['step0'] = (get_assignments(lake_case['base'], dca_list, dcm_list))
+assignment_output['step0'] = (get_assignments(lake_case['step0'], dca_list, dcm_list))
 assignment_output.columns = ['mp', 'step', 'step0']
 assignment_output.index.name = 'dca'
 output_csv = file_path + "output/mp_steps " + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
 assignment_output.to_csv(output_csv)
+dca_changes = zip(assignment_output['step0'], assignment_output['step'], \
+        assignment_output['mp'])
+for i in ['1', '2', '3', '4', '5']:
+    assignment_output['step'+i] = [x[2] if x[1] <= int(i) else x[0] \
+            for x in dca_changes]
+summary_df = assignment_output.join(dca_info['area_sqmi'])
+summary_melt = pd.melt(summary_df, id_vars=['area_sqmi'], \
+        value_vars=['step'+str(i) for i in range(0, 6)], \
+        var_name='step', value_name='dcm')
+for i in range(0, 6):
+    empty = pd.DataFrame.from_dict({'area_sqmi': 0, 'step':'step'+str(i), \
+            'dcm':dcm_list})
+    summary_melt = summary_melt.append(empty)
+summary = summary_melt.groupby(['step', 'dcm']).sum().unstack(level=[1])
+summary['total'] = summary.sum(axis=1)
 
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
@@ -358,6 +373,9 @@ book = load_workbook(filename=output_excel)
 writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
-tracking.to_excel(writer, sheet_name='Script Output')
+tracking.to_excel(writer, sheet_name='Script Output - DCA Changes')
+summary.to_excel(writer, sheet_name='Script Output - DCM Areas')
 writer.save()
+
+
 
