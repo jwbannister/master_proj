@@ -28,9 +28,15 @@ def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factor
         benefit2 = previous_case_factors['water'] - case_factors['water']
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
-def prioritize(value_percents, minimum_hab):
-    if any([x < minimum_hab for x in value_percents[0:5]]):
-        return {1: value_percents[0:5].idxmin(), 2: 'water'}
+def prioritize(value_percents, hab_minimums):
+    hab_deficits = {x: value_percents[x] - hab_minimums[x] \
+            for x in value_percents.index.tolist() \
+            if x != 'water'}
+    if any([x < 0 for x in hab_deficits.values()]):
+        sort_deficits = sorted(hab_deficits.values())
+        one = hab_deficits.values().index(sort_deficits[0])
+        two = hab_deficits.values().index(sort_deficits[1])
+        return {1: hab_deficits.keys()[one], 2: hab_deficits.keys()[two]}
     else:
         return {1: 'water', 2: value_percents[0:5].idxmin()}
 
@@ -96,6 +102,53 @@ def calc_totals(case, custom_factors, step, dca_info):
     factors = build_case_factors(case, custom_factors, step)
     return factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
+def patch_worksheet():
+    """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
+    https://bitbucket.org/openpyxl/openpyxl/issues/365/styling-merged-cells-isnt-working
+    Thank you to Sergey Pikhovkin for the fix
+    """
+
+    def merge_cells(self, range_string=None, start_row=None, start_column=None, end_row=None, end_column=None):
+        """ Set merge on a cell range.  Range is a cell range (e.g. A1:E1)
+        This is monkeypatched to remove cell deletion bug
+        https://bitbucket.org/openpyxl/openpyxl/issues/365/styling-merged-cells-isnt-working
+        """
+        if not range_string and not all((start_row, start_column, end_row, end_column)):
+            msg = "You have to provide a value either for 'coordinate' or for\
+            'start_row', 'start_column', 'end_row' *and* 'end_column'"
+            raise ValueError(msg)
+        elif not range_string:
+            range_string = '%s%s:%s%s' % (get_column_letter(start_column),
+                                          start_row,
+                                          get_column_letter(end_column),
+                                          end_row)
+        elif ":" not in range_string:
+            if COORD_RE.match(range_string):
+                return  # Single cell, do nothing
+            raise ValueError("Range must be a cell range (e.g. A1:E1)")
+        else:
+            range_string = range_string.replace('$', '')
+
+        if range_string not in self._merged_cells:
+            self._merged_cells.append(range_string)
+
+
+        # The following is removed by this monkeypatch:
+
+        # min_col, min_row, max_col, max_row = range_boundaries(range_string)
+        # rows = range(min_row, max_row+1)
+        # cols = range(min_col, max_col+1)
+        # cells = product(rows, cols)
+
+        # all but the top-left cell are removed
+        #for c in islice(cells, 1, None):
+            #if c in self._cells:
+                #del self._cells[c]
+
+    # Apply monkey patch
+    worksheet.Worksheet.merge_cells = merge_cells
+#patch_worksheet()
+
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
 file_name = "MP Workbook LAUNCHPAD.xlsx"
@@ -104,7 +157,7 @@ mp_file = pd.ExcelFile(file_path + file_name)
 # generate habitat and water duty factor tables
 dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
         usecols="A,C,D,E,F,G,H", \
-        names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])
+        names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
 dcm_factors.set_index('dcm', inplace=True)
 # build up custom habitat and water factor tables
 custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
@@ -141,7 +194,7 @@ start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
         usecols="A:AF")
 
 # define "soft" transition DCMs
-soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=6, \
+soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=5, \
         usecols="K").iloc[:, 0].tolist()
 soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
 soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
@@ -151,14 +204,19 @@ script_input = mp_file.parse(sheet_name="MP_new", header=None, \
         usecols="L")[0].tolist()
 hard_limit = script_input[0]
 soft_limit = script_input[1]
-habitat_minimum = script_input[2] + 0.01
 dcm_limits = {}
-dcm_limits['Brine'] = script_input[3]
-dcm_limits['Sand Fences'] = script_input[4]
+dcm_limits['Brine'] = script_input[2]
+dcm_limits['Sand Fences'] = script_input[3]
+hab_limit_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="P")[0].tolist()
+hab_buffer_over = 0
+hab_buffer_under = 0.03
+hab_limit_input = [x + hab_buffer_over for x in hab_limit_input]
+hab_limits = dict(zip(['bw', 'mw', 'pl', 'ms', 'md'], hab_limit_input))
 
 # read and set preferences for waterless DCMs
 pref_input = mp_file.parse(sheet_name="MP_new", header=None, \
-        usecols="M")[0].tolist()[6:11]
+        usecols="M")[0].tolist()[5:11]
 pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
 
 dcm_list = factors['dcm'].index.tolist()
@@ -190,7 +248,7 @@ sand_fence_dcas = [x for x, y in enumerate(new_case['Sand Fences']) if y ==1]
 sand_fence_area = sum([dca_info['area_sqmi'][x] for x in sand_fence_dcas])
 dcm_area_tracking['Sand Fences'] = sand_fence_area
 # set priorities for initial change
-priority = prioritize(new_percent, habitat_minimum)
+priority = prioritize(new_percent, hab_limits)
 step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard_transition': hard_transition, \
         'soft_transition': soft_transition, \
@@ -265,6 +323,21 @@ for step in range(1, 6):
                 best_change = sorted([smartest['soft'][soft_nn], \
                         smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                         reverse=True)[0]
+                test_case = eval_case.copy()
+                test_case.iloc[best_change[3]] = np.array(best_change[2])
+                case_factors = build_case_factors(test_case, factors, 'mp')
+                test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
+                test_percent = test_total/total['base']
+                test_deficits = {x: hab_limits[x] - test_percent[x] \
+                        for x in test_percent.index.tolist() \
+                        if x != 'water'}
+                if any([x > hab_buffer_under for x in test_deficits.values()]):
+                    print "Buffer Exceeded!"
+                    if best_change[4] == 'soft':
+                        soft_nn += 1
+                    else:
+                        hard_nn += 1
+                    continue
                 dcm_type = dcm_list[best_change[2].index(1)]
                 if dcm_type in dcm_limits.keys():
                     if dca_info.iloc[best_change[3]]['area_sqmi'] + \
@@ -292,6 +365,7 @@ for step in range(1, 6):
                     else:
                         hard_transition += dca_info.iloc[best_change[3]]['area_sqmi']
                         break
+
         except:
             break
 
@@ -306,7 +380,7 @@ for step in range(1, 6):
         case_factors = build_case_factors(new_case, factors, 'mp')
         new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/total['base']
-        priority = prioritize(new_percent, habitat_minimum)
+        priority = prioritize(new_percent, hab_limits)
         change = pd.Series({'step': step, \
                 'dca': dca_info.index.tolist()[best_change[3]], \
                 'from': eval_case.columns.tolist()[\
@@ -335,15 +409,17 @@ for i in range(1, 6):
 assignment_output['step0'] = (get_assignments(lake_case['step0'], dca_list, dcm_list))
 assignment_output.columns = ['mp', 'step', 'step0']
 assignment_output.index.name = 'dca'
-output_csv = file_path + "output/mp_steps " + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
-assignment_output.to_csv(output_csv)
 dca_changes = zip(assignment_output['step0'], assignment_output['step'], \
         assignment_output['mp'])
 for i in ['1', '2', '3', '4', '5']:
     assignment_output['step'+i] = [x[2] if x[1] <= int(i) else x[0] \
             for x in dca_changes]
+output_csv = file_path + "output/mp_steps " + \
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
+assignment_output.to_csv(output_csv)
+
 summary_df = assignment_output.join(dca_info['area_sqmi'])
+hab_ponds = [dcm_list[x] for x in [8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 29]]
 summary_melt = pd.melt(summary_df, id_vars=['area_sqmi'], \
         value_vars=['step'+str(i) for i in range(0, 6)], \
         var_name='step', value_name='dcm')
@@ -376,6 +452,3 @@ writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 tracking.to_excel(writer, sheet_name='Script Output - DCA Changes')
 summary.to_excel(writer, sheet_name='Script Output - DCM Areas')
 writer.save()
-
-
-
