@@ -6,6 +6,18 @@ import os
 from openpyxl import worksheet
 from openpyxl import load_workbook
 
+class color:
+   PURPLE = '\033[95m'
+   CYAN = '\033[96m'
+   DARKCYAN = '\033[36m'
+   BLUE = '\033[94m'
+   GREEN = '\033[92m'
+   YELLOW = '\033[93m'
+   RED = '\033[91m'
+   BOLD = '\033[1m'
+   UNDERLINE = '\033[4m'
+   END = '\033[0m'
+
 def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
         priority, dca_idx, dca_info, waterless_preferences):
     previous_case_factors = previous_factors.loc[previous_case.name]
@@ -102,135 +114,144 @@ def calc_totals(case, custom_factors, step, dca_info):
     factors = build_case_factors(case, custom_factors, step)
     return factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
-def patch_worksheet():
-    """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
-    https://bitbucket.org/openpyxl/openpyxl/issues/365/styling-merged-cells-isnt-working
-    Thank you to Sergey Pikhovkin for the fix
-    """
+def build_factor_tables():
+    dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
+            usecols="A,C,D,E,F,G,H", \
+            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
+    dcm_factors.set_index('dcm', inplace=True)
+    # build up custom habitat and water factor tables
+    custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
+            usecols="A,B,C,D,E,F,G,H,I", \
+            names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
+    custom_info.set_index(['dca', 'dcm'], inplace=True)
+    custom_filled = custom_info.apply(backfill, axis=1, \
+            backfill_data=dcm_factors, \
+            columns_list=['bw', 'mw', 'pl', 'ms', 'md', 'water'])
+    custom_steps = ['base', 'dwm', 'step0', 'mp']
+    factors = {x: build_custom_steps(x, custom_steps, custom_filled) \
+            for x in custom_steps}
+    factors['dcm'] = dcm_factors.copy()
+    return factors
 
-    def merge_cells(self, range_string=None, start_row=None, start_column=None, end_row=None, end_column=None):
-        """ Set merge on a cell range.  Range is a cell range (e.g. A1:E1)
-        This is monkeypatched to remove cell deletion bug
-        https://bitbucket.org/openpyxl/openpyxl/issues/365/styling-merged-cells-isnt-working
-        """
-        if not range_string and not all((start_row, start_column, end_row, end_column)):
-            msg = "You have to provide a value either for 'coordinate' or for\
-            'start_row', 'start_column', 'end_row' *and* 'end_column'"
-            raise ValueError(msg)
-        elif not range_string:
-            range_string = '%s%s:%s%s' % (get_column_letter(start_column),
-                                          start_row,
-                                          get_column_letter(end_column),
-                                          end_row)
-        elif ":" not in range_string:
-            if COORD_RE.match(range_string):
-                return  # Single cell, do nothing
-            raise ValueError("Range must be a cell range (e.g. A1:E1)")
+def read_dca_info():
+    dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
+            usecols="A,B,C,D,F", \
+            names=["dca", "area_ac", "area_sqmi", "base", "step0"])
+    dca_info.set_index('dca', inplace=True)
+    return dca_info
+
+def read_past_status():
+    lake_case = {'base': [], 'step0': []}
+    for case in lake_case.keys():
+        assignments = [np.array(factors['dcm'].index.get_level_values('dcm')) \
+                == dca_info[case][x] for x in range(0, len(dca_info))]
+        assignments = [assignments[x].astype(int).tolist() \
+                for x in range(0, len(assignments))]
+        case_df = pd.DataFrame(assignments)
+        case_df.index = dca_info.index
+        case_df.columns = factors['dcm'].index.tolist()
+        lake_case[case] = case_df
+    return lake_case
+
+def define_soft():
+    soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=5, \
+            usecols="P").iloc[:, 0].tolist()[6:13]
+    soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
+    soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
+    return soft_idx
+
+def printout():
+    readout = ""
+    for x in new_percent.keys().tolist():
+        if priority[1] == x:
+            pri = color.BOLD
         else:
-            range_string = range_string.replace('$', '')
+            pri = ""
+        try:
+            if target_flag[x] == 'ok':
+                readout = readout + pri + color.GREEN + x + ": " + \
+                        str(round(new_percent[x], 3)) \
+                        + ", " + color.END
+            else:
+                readout = readout + pri + color.RED + x + ": " + \
+                        str(round(new_percent[x], 3)) \
+                        + ", " + color.END
+        except:
+            readout = readout + pri + x + ": " + \
+                    str(round(new_percent[x], 3)) \
+                    + ", " + color.END
+    return readout
 
-        if range_string not in self._merged_cells:
-            self._merged_cells.append(range_string)
+def check_exceed(percents, limits, upper_buffer, lower_buffer):
+    exceed_flag = {x: 'ok' for x in percents.keys().tolist() \
+            if x != 'water'}
+    for x in exceed_flag.keys():
+        upper_limit = limits[x] + upper_buffer
+        lower_limit = limits[x] - lower_buffer[x]
+        if percents[x] > upper_limit:
+            exceed_flag[x] = 'over'
+        if percents[x] < lower_limit:
+            exceed_flag[x] = 'under'
+    return exceed_flag
 
-
-        # The following is removed by this monkeypatch:
-
-        # min_col, min_row, max_col, max_row = range_boundaries(range_string)
-        # rows = range(min_row, max_row+1)
-        # cols = range(min_col, max_col+1)
-        # cells = product(rows, cols)
-
-        # all but the top-left cell are removed
-        #for c in islice(cells, 1, None):
-            #if c in self._cells:
-                #del self._cells[c]
-
-    # Apply monkey patch
-    worksheet.Worksheet.merge_cells = merge_cells
-#patch_worksheet()
+def get_lower_buffer(hard_transition):
+    avg_increase = {'bw': 0.17, 'mw': 0.21, 'pl': 0.27, 'ms': 0.48, 'md': 0.22}
+    lower_buffer = {x: max((hard_limit - hard_transition) * avg_increase[x] / \
+            (total['base'][x] * 0.0015625), 0) \
+            for x in total['base'].keys().tolist() if x != 'water'}
+    # do not want to be in the position of having to re-establish veg
+    lower_buffer['md'] = 0
+    return lower_buffer
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
 file_name = "MP Workbook LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
-# generate habitat and water duty factor tables
-dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
-        usecols="A,C,D,E,F,G,H", \
-        names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
-dcm_factors.set_index('dcm', inplace=True)
-# build up custom habitat and water factor tables
-custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
-        usecols="A,B,C,D,E,F,G,H,I", \
-        names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
-custom_info.set_index(['dca', 'dcm'], inplace=True)
-custom_filled = custom_info.apply(backfill, axis=1, \
-        backfill_data=dcm_factors, \
-        columns_list=['bw', 'mw', 'pl', 'ms', 'md', 'water'])
-custom_steps = ['base', 'dwm', 'step0', 'mp']
-factors = {x: build_custom_steps(x, custom_steps, custom_filled) \
-        for x in custom_steps}
-factors['dcm'] = dcm_factors.copy()
+factors = build_factor_tables()
+dcm_list = factors['dcm'].index.tolist()
 
-dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
-        usecols="A,B,C,D,F", \
-        names=["dca", "area_ac", "area_sqmi", "base", "step0"])
-dca_info.set_index('dca', inplace=True)
+dca_info = read_dca_info()
 
-# known cases
-lake_case = {'base': [], 'step0': []}
-for case in lake_case.keys():
-    assignments = [np.array(factors['dcm'].index.get_level_values('dcm')) \
-            == dca_info[case][x] for x in range(0, len(dca_info))]
-    assignments = [assignments[x].astype(int).tolist() \
-            for x in range(0, len(assignments))]
-    case_df = pd.DataFrame(assignments)
-    case_df.index = dca_info.index
-    case_df.columns = factors['dcm'].index.tolist()
-    lake_case[case] = case_df
+lake_case = read_past_status()
+dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 
-# read DCA-DCM constraints file
+# read in DCA - DCM constraints
 start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
         usecols="A:AF")
 
-# define "soft" transition DCMs
-soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=5, \
-        usecols="K").iloc[:, 0].tolist()
-soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
-soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
+# read and set preferences for waterless DCMs
+pref_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="P")[0].tolist()[20:]
+pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
+
+soft_idx = define_soft()
 
 # read limits and toggles
 script_input = mp_file.parse(sheet_name="MP_new", header=None, \
-        usecols="L")[0].tolist()
+        usecols="Q")[0].tolist()[0:4]
 hard_limit = script_input[0]
 soft_limit = script_input[1]
 dcm_limits = {}
 dcm_limits['Brine'] = script_input[2]
 dcm_limits['Sand Fences'] = script_input[3]
 hab_limit_input = mp_file.parse(sheet_name="MP_new", header=None, \
-        usecols="P")[0].tolist()
-hab_buffer_over = 0
-hab_buffer_under = 0.03
-hab_limit_input = [x + hab_buffer_over for x in hab_limit_input]
-hab_limits = dict(zip(['bw', 'mw', 'pl', 'ms', 'md'], hab_limit_input))
+        usecols="Q")[0].tolist()[4:9]
 
-# read and set preferences for waterless DCMs
-pref_input = mp_file.parse(sheet_name="MP_new", header=None, \
-        usecols="M")[0].tolist()[5:11]
-pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
+upper_buffer = 0.05
+hab_fudge = 0.02
+guilds = ['bw', 'mw', 'pl', 'ms', 'md']
+fudge_guilds = ['ms', 'mw']
+hab_limits = dict(zip(guilds, hab_limit_input))
+for x in guilds:
+    if x in fudge_guilds:
+        hab_limits[x] = hab_limits[x] + hab_fudge
 
-dcm_list = factors['dcm'].index.tolist()
-dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 total = {}
 for case in lake_case.keys():
     total[case] = calc_totals(lake_case[case], factors, case, dca_info)
-step_info = {}
-step_info['base'] = {'totals': total['base'],
-        'percent_base': total['base']/total['base'], \
-        'hard_transition': 0, 'soft_transition': 0, \
-        'assignments': get_assignments(lake_case['base'], dca_list, dcm_list)}
 
-# initialize ariables before loop - DO NOT MAKE CHANGES HERE
+# initialize ariables before loop
 new_constraints = start_constraints.copy()
 new_case = lake_case['step0'].copy()
 new_assignments = get_assignments(new_case, dca_list, dcm_list)
@@ -239,35 +260,41 @@ new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
 tracking = pd.DataFrame.from_items([('step', []), ('dca', []), ('from', []), \
         ('to', []), ('bw', []), ('mw', []), ('pl', []), ('ms', []), ('md', []), \
-        ('water', []), ('hard', []), ('soft', []), ('brine', []), ('sand_fences', [])])
+        ('water', []), ('hard', []), ('soft', []), ('brine', []), \
+        ('sand_fences', [])])
 tracking.index.name = 'change'
-hard_transition = 0
-soft_transition = 0
+priority = prioritize(new_percent, hab_limits)
+lower_buffer = get_lower_buffer(0)
+target_flag = check_exceed(new_percent, hab_limits, upper_buffer, lower_buffer)
+
+step_info = {}
+step_info['base'] = {'totals': total['base'],
+        'percent_base': total['base']/total['base'], \
+        'hard_transition': 0, 'soft_transition': 0, \
+        'assignments': get_assignments(lake_case['base'], dca_list, dcm_list)}
+step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
+        'hard_transition': 0, 'soft_transition': 0, \
+        'assignments': new_assignments}
+
+# initialize area tracking for DCMs that have lakewide limits
 dcm_area_tracking = {}
 sand_fence_dcas = [x for x, y in enumerate(new_case['Sand Fences']) if y ==1]
 sand_fence_area = sum([dca_info['area_sqmi'][x] for x in sand_fence_dcas])
 dcm_area_tracking['Sand Fences'] = sand_fence_area
-# set priorities for initial change
-priority = prioritize(new_percent, hab_limits)
-step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
-        'hard_transition': hard_transition, \
-        'soft_transition': soft_transition, \
-        'assignments': new_assignments}
+
 change_counter = 0
 for step in range(1, 6):
     print 'step ' + str(step)
     hard_transition = 0
     soft_transition = 0
+    # intialize area tracking for DCMs that have per step limits
     dcm_area_tracking['Brine'] = 0
     while hard_transition < hard_limit or soft_transition < soft_limit:
         change_counter += 1
-        print "hard = " + str(round(hard_transition, 2)) + ", soft = " +\
-                str(round(soft_transition, 2)) + ", " + str(priority[1]) + " = " +\
-                str(round(new_percent[priority[1]], 3)) + ", " + str(priority[2]) +\
-                " = " + str(round(new_percent[priority[2]], 3))
+        print "hard/soft: " + str(round(hard_transition, 2)) + "/" + \
+                str(round(soft_transition, 2)) + ", " + printout()
         constraints = new_constraints.copy()
         eval_case = new_case.copy()
-
         allowed_cases = []
         for dca in range(0, len(constraints)):
             tmp = constraints.iloc[dca].tolist()
@@ -328,15 +355,21 @@ for step in range(1, 6):
                 case_factors = build_case_factors(test_case, factors, 'mp')
                 test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
                 test_percent = test_total/total['base']
-                test_deficits = {x: hab_limits[x] - test_percent[x] \
-                        for x in test_percent.index.tolist() \
-                        if x != 'water'}
-                if any([x > hab_buffer_under for x in test_deficits.values()]):
-                    print "Buffer Exceeded!"
-                    if best_change[4] == 'soft':
-                        soft_nn += 1
-                    else:
-                        hard_nn += 1
+                lower_buffer = get_lower_buffer(hard_transition)
+                exceed_flag = check_exceed(test_percent, hab_limits, upper_buffer, \
+                        lower_buffer)
+                pass_continue = False
+                for hab in target_flag.keys():
+                    if target_flag[hab] == 'ok':
+                        if exceed_flag[hab] != 'ok':
+                            print hab + ": excursion " + exceed_flag[hab] + \
+                                    " target area range!"
+                            if best_change[4] == 'soft':
+                                soft_nn += 1
+                            else:
+                                hard_nn += 1
+                            pass_continue = True
+                if pass_continue:
                     continue
                 dcm_type = dcm_list[best_change[2].index(1)]
                 if dcm_type in dcm_limits.keys():
@@ -349,6 +382,7 @@ for step in range(1, 6):
                     if soft_transition + \
                         dca_info.iloc[best_change[3]]['area_sqmi'] > soft_limit:
                         soft_nn += 1
+                        print "soft transition limit exceeded"
                         continue
                     else:
                         for lim in dcm_limits.keys():
@@ -361,6 +395,7 @@ for step in range(1, 6):
                     if hard_transition + \
                         dca_info.iloc[best_change[3]]['area_sqmi'] > hard_limit:
                         hard_nn += 1
+                        print "hard transition limit exceeded"
                         continue
                     else:
                         hard_transition += dca_info.iloc[best_change[3]]['area_sqmi']
@@ -393,6 +428,9 @@ for step in range(1, 6):
         change = change.append(new_percent)
         change.name = change_counter
         tracking = tracking.append(change)
+        lower_buffer = get_lower_buffer(hard_transition)
+        target_flag = check_exceed(new_percent, hab_limits, upper_buffer, \
+                lower_buffer)
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
             'hard': hard_transition, \
             'soft': soft_transition, \

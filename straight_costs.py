@@ -60,9 +60,9 @@ def patch_worksheet():
 patch_worksheet()
 
 # path for excel files
-file_path = "/home/john/airsci/owens/Master Project & Cost Benefit/"
+file_path = "/home/john/code/master_proj/"
 npv_name = "MP NPV TEMPLATE.xlsx"
-mp_name = "MP Workbook JWB 04-27-2018.xlsx"
+mp_name = "output/MP Workbook 05_10_18 15_54.xlsx"
 
 # read reference tables from NPY Calculation workbook
 input_file = pd.ExcelFile(file_path + npv_name)
@@ -233,7 +233,7 @@ ws.cell(row=18, column=2).value = "Data read from Master Project workbook '" + \
         mp_name + "'"
 ws.cell(row=19, column=2).value = 'NPV Analysis run on ' + \
         datetime.datetime.now().strftime('%m-%d-%Y %H:%M')
-output_file = file_path + npv_name[:7] + \
+output_file = file_path + "output/" + npv_name[:7] + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 wb.save(output_file)
 
