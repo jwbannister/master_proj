@@ -238,14 +238,15 @@ dcm_limits['Sand Fences'] = script_input[3]
 hab_limit_input = mp_file.parse(sheet_name="MP_new", header=None, \
         usecols="Q")[0].tolist()[4:9]
 
+# set buffers and target adjustments
 upper_buffer = 0.05
-hab_fudge = 0.02
 guilds = ['bw', 'mw', 'pl', 'ms', 'md']
-fudge_guilds = ['ms', 'mw']
+# add fudge factor to keep guild area above target (if necessary)
+fudge_guilds = {'ms': 0.02, 'mw': 0.02}
 hab_limits = dict(zip(guilds, hab_limit_input))
 for x in guilds:
     if x in fudge_guilds:
-        hab_limits[x] = hab_limits[x] + hab_fudge
+        hab_limits[x] = hab_limits[x] + fudge_guilds[x]
 
 total = {}
 for case in lake_case.keys():
@@ -276,6 +277,9 @@ step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard_transition': 0, 'soft_transition': 0, \
         'assignments': new_assignments}
 
+dca_water = pd.DataFrame({'step0': case_factors['water'].multiply(dca_info['area_ac'], \
+        axis=0)})
+
 # initialize area tracking for DCMs that have lakewide limits
 dcm_area_tracking = {}
 sand_fence_dcas = [x for x, y in enumerate(new_case['Sand Fences']) if y ==1]
@@ -291,8 +295,10 @@ for step in range(1, 6):
     dcm_area_tracking['Brine'] = 0
     while hard_transition < hard_limit or soft_transition < soft_limit:
         change_counter += 1
-        print "hard/soft: " + str(round(hard_transition, 2)) + "/" + \
-                str(round(soft_transition, 2)) + ", " + printout()
+        print "step " + str(step) + ", change " + str(change_counter) + \
+                ": hard/soft " + str(round(hard_transition, 2)) + "/" + \
+                str(round(soft_transition, 2))
+        print printout()
         constraints = new_constraints.copy()
         eval_case = new_case.copy()
         allowed_cases = []
@@ -358,10 +364,12 @@ for step in range(1, 6):
                 lower_buffer = get_lower_buffer(hard_transition)
                 exceed_flag = check_exceed(test_percent, hab_limits, upper_buffer, \
                         lower_buffer)
+                delta = {x: test_percent[x] - new_percent[x] for x in exceed_flag}
                 pass_continue = False
                 for hab in target_flag.keys():
                     if target_flag[hab] == 'ok':
-                        if exceed_flag[hab] != 'ok':
+                        if (exceed_flag[hab] == 'under' and delta[hab] < 0) or \
+                                (exceed_flag[hab] == 'over' and delta[hab] > 0):
                             print hab + ": excursion " + exceed_flag[hab] + \
                                     " target area range!"
                             if best_change[4] == 'soft':
@@ -428,9 +436,11 @@ for step in range(1, 6):
         change = change.append(new_percent)
         change.name = change_counter
         tracking = tracking.append(change)
-        lower_buffer = get_lower_buffer(hard_transition)
+#        lower_buffer = get_lower_buffer(hard_transition)
         target_flag = check_exceed(new_percent, hab_limits, upper_buffer, \
                 lower_buffer)
+    dca_water = dca_water.join(pd.DataFrame({'step' + str(step): \
+            case_factors['water'].multiply(dca_info['area_ac'], axis=0)}))
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
             'hard': hard_transition, \
             'soft': soft_transition, \
@@ -468,6 +478,7 @@ for i in range(0, 6):
 summary = summary_melt.groupby(['step', 'dcm']).sum().unstack(level=[1])
 summary['total'] = summary.sum(axis=1)
 
+
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
 ws = wb['MP_new']
@@ -489,4 +500,5 @@ writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 tracking.to_excel(writer, sheet_name='Script Output - DCA Changes')
 summary.to_excel(writer, sheet_name='Script Output - DCM Areas')
+dca_water.to_excel(writer, sheet_name='Script Output - Step WD')
 writer.save()

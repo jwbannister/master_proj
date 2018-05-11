@@ -62,7 +62,7 @@ patch_worksheet()
 # path for excel files
 file_path = "/home/john/code/master_proj/"
 npv_name = "MP NPV TEMPLATE.xlsx"
-mp_name = "output/MP Workbook 05_10_18 15_54.xlsx"
+mp_name = "output/MP Workbook 05_11_18 10_58.xlsx"
 
 # read reference tables from NPY Calculation workbook
 input_file = pd.ExcelFile(file_path + npv_name)
@@ -84,34 +84,30 @@ hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
 # read data from John Dickey's workbook
 mp_file = pd.ExcelFile(file_path + mp_name)
 # MP implementation schedule
-mp_new_names = ["dca", "acres", "dcm_base", "dcm_dwm", "dcm_step0", \
-        "dcm_step5", "mp_step"]
-mp_new = mp_file.parse(sheet_name="MP_new", header=24, \
+mp_new_names = ["dca", "acres", "base", "dwm", "step0", "step5", "step"]
+mp_new = mp_file.parse(sheet_name="MP_new", header=20, \
         usecols="A,B,D,E,F,G,H", names=mp_new_names, \
         converters={'Step':int}).dropna(how='any')
 # pull water demand by DCA (in acre-ft/year)
-mp_new_wd = mp_file.parse(sheet_name="MP_new", header=24, \
-        usecols="A,H,W,AK,AY,BM", converters={'Step':int}, \
-        names=[mp_new_names[i] for i in [0, 6, 2, 3, 4, 5]]).dropna(how='any')
+mp_steps_wd = mp_file.parse(sheet_name="Script Output - Step WD", header=0, \
+        usecols="A,B,C,D,E,F,G", \
+        names=['dca', '_step0', '_step1', '_step2', '_step3', '_step4', '_step5'])
+mp_steps_wd.set_index('dca', inplace=True)
 
 # get dca areas
 dca_areas = mp_new[['dca', 'acres']].copy().set_index('dca')
 dca_areas['miles'] = dca_areas['acres'] * 0.0015625
 
-mp_steps = mp_new.copy()
-mp_steps_wd = mp_new_wd.copy()
 # expand data to show all steps in Master Project
-for obj in [mp_steps, mp_steps_wd]:
-    obj.set_index('dca', inplace=True)
-    for n in ['1', '2', '3', '4']:
-        obj['dcm_step' + n] = ['X'] * len(obj)
-        for i in obj.index:
-            if obj.loc[i, 'mp_step'] > int(n):
-                obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step0']
-            else:
-                obj.loc[i, 'dcm_step' + n] = obj.loc[i, 'dcm_step5']
-    obj.drop(columns=[s for s in obj.columns if 'dcm' not in s], inplace=True)
-    obj.columns=[s[4:] for s in obj.columns]
+mp_steps = mp_new.copy()
+mp_steps.set_index('dca', inplace=True)
+for n in ['1', '2', '3', '4']:
+    mp_steps['step' + n] = ['X'] * len(mp_steps)
+    for i in mp_steps.index:
+        if mp_steps.loc[i, 'step'] > int(n):
+            mp_steps.loc[i, 'step' + n] = mp_steps.loc[i, 'step0']
+        else:
+            mp_steps.loc[i, 'step' + n] = mp_steps.loc[i, 'step5']
 
 mp_years = mp_steps.copy()
 mp_years_wd = mp_steps_wd.copy()
