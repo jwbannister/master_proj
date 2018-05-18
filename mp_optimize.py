@@ -135,8 +135,9 @@ def build_factor_tables():
 
 def read_dca_info():
     dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
-            usecols="A,B,C,D,F", \
-            names=["dca", "area_ac", "area_sqmi", "base", "step0"])
+            usecols="A,B,D,F", \
+            names=["dca", "area_ac", "base", "step0"])
+    dca_info['area_sqmi'] = dca_info['area_ac'] * 0.0015625
     dca_info.set_index('dca', inplace=True)
     return dca_info
 
@@ -217,8 +218,11 @@ lake_case = read_past_status()
 dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 
 # read in DCA - DCM constraints
-start_constraints = mp_file.parse(sheet_name="Constraints", header=8, \
-        usecols="A:AF")
+constraints_input = mp_file.parse(sheet_name="Constraints", header=8, \
+        usecols="A:AK")
+start_constraints = constraints_input.iloc[:, :31]
+step_constraints = constraints_input.iloc[:, 31:]
+step_constraints.columns = range(1, 6)
 
 # read and set preferences for waterless DCMs
 pref_input = mp_file.parse(sheet_name="MP_new", header=None, \
@@ -303,7 +307,10 @@ for step in range(1, 6):
         eval_case = new_case.copy()
         allowed_cases = []
         for dca in range(0, len(constraints)):
-            tmp = constraints.iloc[dca].tolist()
+            if step_constraints[step][dca] == 0:
+                tmp = new_case.iloc[dca].tolist()
+            else:
+                tmp = constraints.iloc[dca].tolist()
             tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
             a = []
             for dcm in tmp_ind:
@@ -351,8 +358,10 @@ for step in range(1, 6):
         best_change = sorted([smartest['soft'][soft_nn], \
                 smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                 reverse=True)[0]
+        total_options = len(smartest['soft']) + len(smartest['hard'])
         try:
             while True:
+                try_number = str(hard_nn + soft_nn + 1) + "/" + str(total_options) + " "
                 best_change = sorted([smartest['soft'][soft_nn], \
                         smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                         reverse=True)[0]
@@ -370,7 +379,7 @@ for step in range(1, 6):
                     if target_flag[hab] == 'ok':
                         if (exceed_flag[hab] == 'under' and delta[hab] < 0) or \
                                 (exceed_flag[hab] == 'over' and delta[hab] > 0):
-                            print hab + ": excursion " + exceed_flag[hab] + \
+                            print try_number + hab + ": excursion " + exceed_flag[hab] + \
                                     " target area range!"
                             if best_change[4] == 'soft':
                                 soft_nn += 1
@@ -384,13 +393,13 @@ for step in range(1, 6):
                     if dca_info.iloc[best_change[3]]['area_sqmi'] + \
                             dcm_area_tracking[dcm_type] > dcm_limits[dcm_type]:
                         soft_nn += 1
-                        print lim + " area exceeded!"
+                        print try_number + lim + " area exceeded!"
                         continue
                 if best_change[4] == 'soft':
                     if soft_transition + \
                         dca_info.iloc[best_change[3]]['area_sqmi'] > soft_limit:
                         soft_nn += 1
-                        print "soft transition limit exceeded"
+                        print try_number + "soft transition limit exceeded"
                         continue
                     else:
                         for lim in dcm_limits.keys():
@@ -403,7 +412,7 @@ for step in range(1, 6):
                     if hard_transition + \
                         dca_info.iloc[best_change[3]]['area_sqmi'] > hard_limit:
                         hard_nn += 1
-                        print "hard transition limit exceeded"
+                        print try_number + "hard transition limit exceeded"
                         continue
                     else:
                         hard_transition += dca_info.iloc[best_change[3]]['area_sqmi']

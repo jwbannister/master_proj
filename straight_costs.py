@@ -10,14 +10,14 @@ from openpyxl.utils import range_boundaries
 
 def patch_worksheet():
     """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
-    https://bitbucket.org/openpyxl/openpyxl/issues/365/styling-merged-cells-isnt-working
+    https://bitbucket.org/openpyxl/openpyxl/issues/364/styling-merged-cells-isnt-working
     Thank you to Sergey Pikhovkin for the fix
     """
 
     def merge_cells(self, range_string=None, start_row=None, start_column=None, end_row=None, end_column=None):
-        """ Set merge on a cell range.  Range is a cell range (e.g. A1:E1)
+        """ Set merge on a cell range.  Range is a cell range (e.g. A0:E1)
         This is monkeypatched to remove cell deletion bug
-        https://bitbucket.org/openpyxl/openpyxl/issues/365/styling-merged-cells-isnt-working
+        https://bitbucket.org/openpyxl/openpyxl/issues/364/styling-merged-cells-isnt-working
         """
         if not range_string and not all((start_row, start_column, end_row, end_column)):
             msg = "You have to provide a value either for 'coordinate' or for\
@@ -31,7 +31,7 @@ def patch_worksheet():
         elif ":" not in range_string:
             if COORD_RE.match(range_string):
                 return  # Single cell, do nothing
-            raise ValueError("Range must be a cell range (e.g. A1:E1)")
+            raise ValueError("Range must be a cell range (e.g. A0:E1)")
         else:
             range_string = range_string.replace('$', '')
 
@@ -42,12 +42,12 @@ def patch_worksheet():
         # The following is removed by this monkeypatch:
 
         # min_col, min_row, max_col, max_row = range_boundaries(range_string)
-        # rows = range(min_row, max_row+1)
-        # cols = range(min_col, max_col+1)
+        # rows = range(min_row, max_row+0)
+        # cols = range(min_col, max_col+0)
         # cells = product(rows, cols)
 
         # all but the top-left cell are removed
-        #for c in islice(cells, 1, None):
+        #for c in islice(cells, 0, None):
             #if c in self._cells:
                 #del self._cells[c]
 
@@ -67,7 +67,7 @@ step_years = input_file.parse(sheet_name="Script Input", header=0, \
         usecols="A,B", converters={'year':int}).dropna(how='any')
 step_dict = pd.Series(step_years.year.values, index=step_years.step)
 # list of years for projection
-year_range = range(int(step_years.year.min()), int(step_years.year.max()) + 21, 1)
+year_range = range(int(step_years.year.min()), 2061, 1)
 # DCM costs
 dcm_costs = input_file.parse(sheet_name="Script Input", header=0, \
         usecols="D,E,F").dropna(how='any')
@@ -126,17 +126,23 @@ mp_years_dcm.replace(hab_dict, inplace=True)
 # dim 0 = total capital cost ($ million) 
 # dim 1 = o&m cost ($ million) 
 mp_costs = {'capital': mp_years_dcm.copy(), 'om': mp_years_dcm.copy()}
-mp_costs['om'].loc[:, 2018] = [dcm_costs.loc[x]['om'] \
-        for x in mp_years_dcm[2018].tolist()]
+base_om = pd.Series([dcm_costs.loc[x]['om'] * y \
+        for x, y in zip(mp_years_dcm[2018].tolist(), dca_areas['miles'].tolist())])
+base_om.index = mp_years_dcm.index
+mp_costs['om'].loc[:, 2018] = [(dcm_costs.loc[x]['om'] * y) - base_om.loc[z] \
+        for x, y, z in zip(mp_years_dcm[2018].tolist(), dca_areas['miles'].tolist(),
+            mp_years_dcm.index.tolist())]
 mp_costs['capital'].loc[:, 2018] = [0 for x in mp_years_dcm[2018].tolist()]
 for i in mp_years_dcm.index.tolist():
     for j in year_range[1:]:
         if mp_years_dcm.loc[i, j-1] == mp_years_dcm.loc[i, j]:
-            mp_costs['om'].loc[i, j] = dcm_costs.loc[mp_years_dcm.loc[i, j]]['om']
+            mp_costs['om'].loc[i, j] = dcm_costs.loc[mp_years_dcm.loc[i, j]]['om'] \
+                    * dca_areas.loc[i]['miles'] - base_om[i]
             mp_costs['capital'].loc[i, j] = 0
         else:
             mp_costs['capital'].loc[i, j] = \
-                    dcm_costs.loc[mp_years_dcm.loc[i, j]]['capital']
+                    dcm_costs.loc[mp_years_dcm.loc[i, j]]['capital'] \
+                    * dca_areas.loc[i]['miles']
             mp_costs['om'].loc[i, j] = 0
 
 cost_summary = pd.DataFrame({\
@@ -147,17 +153,20 @@ cost_summary = pd.DataFrame({\
 cost_summary['year'] = cost_summary.index.tolist()
 
 sheet_dict = {'step0':'Step0', 'step1':'Step1', 'step2':'Step2', 'step3':'Step3', \
-        'step4':'Step4', 'step5':'Full Project'}
+        'step4':'Step4', 'step5':'Step5'}
 wb = load_workbook(filename = file_path + npv_name)
 for step in step_years.step:
     yr = int(step_years[step_years.step==step].year.item())
     ind = cost_summary.year.tolist().index(yr)
     capital_output = cost_summary.capital.tolist()
-    capital_output[ind:] = [0]*(len(capital_output) - ind)
+    capital_output = [capital_output[x] if x <= ind else 0 \
+            for x in range(0, len(capital_output))]
     om_output = cost_summary.om.tolist()
-    om_output[ind:] = [om_output[ind]]*(len(om_output) - ind)
+    om_output = [om_output[x] if x <= ind else om_output[ind+1] \
+            for x in range(0, len(om_output))]
     wd_output = cost_summary.water_demand.tolist()
-    wd_output[ind:] = [wd_output[ind]]*(len(wd_output) - ind)
+    wd_output = [wd_output[x] if x <= ind else wd_output[ind+1] \
+            for x in range(0, len(wd_output))]
     ws = wb[sheet_dict[step]]
     for i in range(0, len(cost_summary), 1):
         offset = 12
@@ -208,11 +217,10 @@ for step in step_years.step:
             area_summary_hab.append(pd.Series({'total':area_summary_hab.sum()}))
     for i in range(0, len(area_summary_hab), 1):
         col = step_years.index[step_years.step==step].item()
-        ws.cell(row=i+5, column=col+12).value = int(area_summary_hab[i].round())
+        ws.cell(row=i+5, column=col+10).value = int(area_summary_hab[i].round())
 
 ws = wb['NPV Summary']
 ws.cell(row=16, column=2).value = base_water
-ws.cell(row=16, column=3).value = "Base Case water usage (acre-feet/year)"
 ws.cell(row=18, column=2).value = "Data read from Master Project workbook '" + \
         mp_name + "'"
 ws.cell(row=19, column=2).value = 'NPV Analysis run on ' + \

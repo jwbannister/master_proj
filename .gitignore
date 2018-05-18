@@ -2,3 +2,4 @@ gis/*
 .gitignore
 ~*
 output/*
+backup/*
