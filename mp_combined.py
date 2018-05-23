@@ -525,6 +525,11 @@ assignment_output.to_csv(output_csv)
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
         usecols="I,J,K,L").dropna(how='any')
+hab2dcm = hab2dcm.append({'mp_name':'total', 'desc':'x', 'hab_id':'x', 'dust_dcm':'x'},
+        ignore_index=True)
+dcm_order = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
+        usecols="E")[:11]['dust_dcm'].tolist()
+dcm_order.append('total')
 hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
 summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
 summary_melt = pd.melt(summary_df, id_vars=['area_ac'], \
@@ -538,6 +543,12 @@ for nm in summary.keys():
     tot = summary[nm].sum().rename('total')
     summary[nm] = summary[nm].append(tot)
     summary[nm].fillna(0, inplace=True)
+summary['dcm'] = summary['dcm'].loc[dcm_order].copy().drop('None')
+hab2dcm.set_index('mp_name', inplace=True)
+summary['mp_name'] = summary['mp_name'].join(hab2dcm, how='right')
+summary['mp_name'].drop(['desc', 'hab_id', 'dust_dcm'], axis=1, inplace=True)
+summary['mp_name'].fillna(0, inplace=True)
+summary['mp_name'] = summary['mp_name'].drop('None')
 
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
@@ -553,6 +564,14 @@ for j in ['base', 0, 1, 2, 3, 4, 5]:
             continue
         ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
     rw += 1
+# write area summary tables
+ws = wb['Area Summary']
+for i in range(0, len(summary['dcm']), 1):
+    for j in range(0, 6):
+        ws.cell(row=i+5, column=j+2).value = int(summary['dcm'].iloc[i, j].round())
+for i in range(0, len(summary['mp_name']), 1):
+    for j in range(0, 6):
+        ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
 output_excel = file_path + "output/" +file_name[:3] + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 wb.save(output_excel)
@@ -562,13 +581,5 @@ writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 tracking.to_excel(writer, sheet_name='Script Output - DCA Changes')
 
-# write area summary tables
-ws = wb['Area Summary']
-for i in range(0, len(summary['dcm']), 1):
-    for j in range(1, 6):
-        ws.cell(row=i+5, column=j+2).value = int(summary['dcm'].iloc[i, j].round())
-for i in range(0, len(summary['mp_name']), 1):
-    for j in range(1, 6):
-        ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
 writer.save()
 
