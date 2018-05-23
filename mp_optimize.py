@@ -18,53 +18,6 @@ class color:
    UNDERLINE = '\033[4m'
    END = '\033[0m'
 
-def patch_worksheet():
-    """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
-    https://bitbucket.org/openpyxl/openpyxl/issues/364/styling-merged-cells-isnt-working
-    Thank you to Sergey Pikhovkin for the fix
-    """
-
-    def merge_cells(self, range_string=None, start_row=None, start_column=None, end_row=None, end_column=None):
-        """ Set merge on a cell range.  Range is a cell range (e.g. A0:E1)
-        This is monkeypatched to remove cell deletion bug
-        https://bitbucket.org/openpyxl/openpyxl/issues/364/styling-merged-cells-isnt-working
-        """
-        if not range_string and not all((start_row, start_column, end_row, end_column)):
-            msg = "You have to provide a value either for 'coordinate' or for\
-            'start_row', 'start_column', 'end_row' *and* 'end_column'"
-            raise ValueError(msg)
-        elif not range_string:
-            range_string = '%s%s:%s%s' % (get_column_letter(start_column),
-                                          start_row,
-                                          get_column_letter(end_column),
-                                          end_row)
-        elif ":" not in range_string:
-            if COORD_RE.match(range_string):
-                return  # Single cell, do nothing
-            raise ValueError("Range must be a cell range (e.g. A0:E1)")
-        else:
-            range_string = range_string.replace('$', '')
-
-        if range_string not in self.merged_cells:
-            self.merged_cells.add(range_string)
-
-
-        # The following is removed by this monkeypatch:
-
-        # min_col, min_row, max_col, max_row = range_boundaries(range_string)
-        # rows = range(min_row, max_row+0)
-        # cols = range(min_col, max_col+0)
-        # cells = product(rows, cols)
-
-        # all but the top-left cell are removed
-        #for c in islice(cells, 0, None):
-            #if c in self._cells:
-                #del self._cells[c]
-
-    # Apply monkey patch
-    worksheet.Worksheet.merge_cells = merge_cells
-patch_worksheet()
-
 def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
         priority, dca_idx, dca_info, waterless_preferences):
     previous_case_factors = previous_factors.loc[previous_case.name]
@@ -202,8 +155,8 @@ def read_past_status():
     return lake_case
 
 def define_soft():
-    soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
-            usecols="A").iloc[:, 0].tolist()[6:13]
+    soft_dcm_input = mp_file.parse(sheet_name="MP_new", header=5, \
+            usecols="P").iloc[:, 0].tolist()[6:13]
     soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
     soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
     return soft_idx
@@ -253,7 +206,7 @@ def get_lower_buffer(hard_transition):
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP Workbook LAUNCHPAD JV.xlsx"
+file_name = "MP Workbook LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
 factors = build_factor_tables()
@@ -272,22 +225,22 @@ step_constraints = constraints_input.iloc[:, 31:]
 step_constraints.columns = range(1, 6)
 
 # read and set preferences for waterless DCMs
-pref_input = mp_file.parse(sheet_name="MP Analysis Input", header=20, \
-        usecols="A").iloc[:, 0].tolist()
+pref_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="P")[0].tolist()[20:]
 pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
 
 soft_idx = define_soft()
 
 # read limits and toggles
-script_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
-        usecols="B").iloc[:, 0].tolist()[0:4]
+script_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="Q")[0].tolist()[0:4]
 hard_limit = script_input[0]
 soft_limit = script_input[1]
 dcm_limits = {}
 dcm_limits['Brine'] = script_input[2]
 dcm_limits['Sand Fences'] = script_input[3]
-hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", header=3, \
-        usecols="B").iloc[:, 0].tolist()[0:5]
+hab_limit_input = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="Q")[0].tolist()[4:9]
 
 # set buffers and target adjustments
 upper_buffer = 0.05
@@ -405,8 +358,7 @@ for step in range(1, 6):
         best_change = sorted([smartest['soft'][soft_nn], \
                 smartest['hard'][hard_nn]], key=lambda x: (x[0], x[1]), \
                 reverse=True)[0]
-        total_options = len([1 for x in smartest['soft'] if x[0] > 0]) + \
-                len([1 for x in smartest['hard'] if x[0] > 0])
+        total_options = len(smartest['soft']) + len(smartest['hard'])
         try:
             while True:
                 try_number = str(hard_nn + soft_nn + 1) + "/" + str(total_options) + " "
@@ -523,21 +475,18 @@ output_csv = file_path + "output/mp_steps " + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
 assignment_output.to_csv(output_csv)
 
-hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
-        usecols="I,J,K,L").dropna(how='any')
-hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
-summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
-summary_melt = pd.melt(summary_df, id_vars=['area_ac'], \
+summary_df = assignment_output.join(dca_info['area_sqmi'])
+hab_ponds = [dcm_list[x] for x in [8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 29]]
+summary_melt = pd.melt(summary_df, id_vars=['area_sqmi'], \
         value_vars=['step'+str(i) for i in range(0, 6)], \
-        var_name='step', value_name='mp_name')
-summary_melt['dcm'] = summary_melt['mp_name']
-summary_melt['dcm'].replace(hab_dict, inplace=True)
-summary = {'mp_name': [], 'dcm': []}
-for nm in summary.keys():
-    summary[nm] = summary_melt.groupby([nm, 'step'])['area_ac'].agg('sum').unstack()
-    tot = summary[nm].sum().rename('total')
-    summary[nm] = summary[nm].append(tot)
-    summary[nm].fillna(0, inplace=True)
+        var_name='step', value_name='dcm')
+for i in range(0, 6):
+    empty = pd.DataFrame.from_dict({'area_sqmi': 0, 'step':'step'+str(i), \
+            'dcm':dcm_list})
+    summary_melt = summary_melt.append(empty)
+summary = summary_melt.groupby(['step', 'dcm']).sum().unstack(level=[1])
+summary['total'] = summary.sum(axis=1)
+
 
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
@@ -549,8 +498,6 @@ for i in range(0, len(assignment_output), 1):
 rw = 3
 for j in ['base', 0, 1, 2, 3, 4, 5]:
     for k in range(2, 8):
-        if (j == 'base' and k == 7):
-            continue
         ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
     rw += 1
 output_excel = file_path + "output/" +file_name[:12] + \
@@ -561,15 +508,6 @@ writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 tracking.to_excel(writer, sheet_name='Script Output - DCA Changes')
-
-# write area summary tables
-ws = wb['Area Summary']
-for i in range(0, len(summary['dcm']), 1):
-    for j in range(1, 6):
-        ws.cell(row=i+5, column=j+2).value = int(summary['dcm'].iloc[i, j].round())
-for i in range(0, len(summary['mp_name']), 1):
-    for j in range(1, 6):
-        ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
-
+summary.to_excel(writer, sheet_name='Script Output - DCM Areas')
+dca_water.to_excel(writer, sheet_name='Script Output - Step WD')
 writer.save()
-
