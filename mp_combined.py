@@ -253,7 +253,7 @@ def get_lower_buffer(hard_transition):
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP Workbook LAUNCHPAD JV.xlsx"
+file_name = "MP LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
 factors = build_factor_tables()
@@ -553,7 +553,7 @@ for j in ['base', 0, 1, 2, 3, 4, 5]:
             continue
         ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
     rw += 1
-output_excel = file_path + "output/" +file_name[:12] + \
+output_excel = file_path + "output/" +file_name[:3] + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 wb.save(output_excel)
 book = load_workbook(filename=output_excel)
@@ -570,6 +570,5 @@ for i in range(0, len(summary['dcm']), 1):
 for i in range(0, len(summary['mp_name']), 1):
     for j in range(1, 6):
         ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
-
 writer.save()
 
