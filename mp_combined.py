@@ -253,7 +253,7 @@ def get_lower_buffer(hard_transition):
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP LAUNCHPAD.xlsx"
+file_name = "MP LAUNCHPAD no constraints.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
 factors = build_factor_tables()
@@ -302,6 +302,8 @@ for x in guilds:
 total = {}
 for case in lake_case.keys():
     total[case] = calc_totals(lake_case[case], factors, case, dca_info)
+total['base']['water'] = mp_file.parse(sheet_name="MP_new", header=None, \
+        usecols="G").iloc[:, 0].tolist()[1]
 
 # initialize ariables before loop
 new_constraints = start_constraints.copy()
@@ -399,6 +401,7 @@ for step in range(1, 6):
         for flag in ['soft', 'hard']:
             smartest[flag] = sorted(smart_cases[flag], key=lambda x: (x[0], x[1]), \
                     reverse=True)
+            smartest[flag] = [x for x in smartest[flag] if x[0] > 0]
 
         soft_nn = 0
         hard_nn = 0
@@ -558,11 +561,12 @@ for i in range(0, len(assignment_output), 1):
     ws.cell(row=i+offset, column=7).value = assignment_output['mp'][i]
     ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
 rw = 3
+col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
 for j in ['base', 0, 1, 2, 3, 4, 5]:
-    for k in range(2, 8):
-        if (j == 'base' and k == 7):
+    for k in col_ind.keys():
+        if (j == 'base' and k == 'water'):
             continue
-        ws.cell(row=rw, column=k).value = step_info[j]['totals'][k-2]
+        ws.cell(row=rw, column=col_ind[k]).value = step_info[j]['totals'][k]
     rw += 1
 # write area summary tables
 ws = wb['Area Summary']
