@@ -293,7 +293,8 @@ hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", header=3, \
 upper_buffer = 0.05
 guilds = ['bw', 'mw', 'pl', 'ms', 'md']
 # add fudge factor to keep guild area above target (if necessary)
-fudge_guilds = {'ms': 0.02, 'mw': 0.02}
+fudge_guilds = {}
+#fudge_guilds = {'ms': 0.02, 'mw': 0.02}
 hab_limits = dict(zip(guilds, hab_limit_input))
 for x in guilds:
     if x in fudge_guilds:
@@ -401,7 +402,7 @@ for step in range(1, 6):
         for flag in ['soft', 'hard']:
             smartest[flag] = sorted(smart_cases[flag], key=lambda x: (x[0], x[1]), \
                     reverse=True)
-            smartest[flag] = [x for x in smartest[flag] if x[0] > 0]
+            #smartest[flag] = [x for x in smartest[flag] if x[0] > 0]
 
         soft_nn = 0
         hard_nn = 0
@@ -505,7 +506,7 @@ for step in range(1, 6):
             'hard': hard_transition, \
             'soft': soft_transition, \
             'assignments': new_assignments}
-total_water_savings = total['base']['water'] - new_total['water']
+total_water_savings = total['step0']['water'] - new_total['water']
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 assignment_output = new_assignments.copy()
