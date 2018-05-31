@@ -65,6 +65,53 @@ def patch_worksheet():
     worksheet.Worksheet.merge_cells = merge_cells
 patch_worksheet()
 
+def build_factor_tables():
+    dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
+            usecols="A,C,D,E,F,G,H", \
+            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
+    dcm_factors.set_index('dcm', inplace=True)
+    # build up custom habitat and water factor tables
+    custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
+            usecols="A,B,C,D,E,F,G,H,I", \
+            names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
+    custom_info.set_index(['dca', 'dcm'], inplace=True)
+    custom_filled = custom_info.apply(backfill, axis=1, \
+            backfill_data=dcm_factors, \
+            columns_list=['bw', 'mw', 'pl', 'ms', 'md', 'water'])
+    custom_steps = ['base', 'dwm', 'step0', 'mp']
+    factors = {x: build_custom_steps(x, custom_steps, custom_filled) \
+            for x in custom_steps}
+    factors['dcm'] = dcm_factors.copy()
+    return factors
+
+def read_dca_info():
+    dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
+            usecols="A,B,D,F", \
+            names=["dca", "area_ac", "base", "step0"])
+    dca_info['area_sqmi'] = dca_info['area_ac'] * 0.0015625
+    dca_info.set_index('dca', inplace=True)
+    return dca_info
+
+def read_past_status():
+    lake_case = {'base': [], 'step0': []}
+    for case in lake_case.keys():
+        assignments = [np.array(factors['dcm'].index.get_level_values('dcm')) \
+                == dca_info[case][x] for x in range(0, len(dca_info))]
+        assignments = [assignments[x].astype(int).tolist() \
+                for x in range(0, len(assignments))]
+        case_df = pd.DataFrame(assignments)
+        case_df.index = dca_info.index
+        case_df.columns = factors['dcm'].index.tolist()
+        lake_case[case] = case_df
+    return lake_case
+
+def define_soft():
+    soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
+            usecols="A").iloc[:, 0].tolist()[6:13]
+    soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
+    soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
+    return soft_idx
+
 def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
         priority, dca_idx, dca_info, waterless_preferences):
     previous_case_factors = previous_factors.loc[previous_case.name]
@@ -83,7 +130,7 @@ def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factor
             benefit2 = -6
     else:
         smart = case_factors[priority[1]] - previous_case_factors[priority[1]] > 0
-        benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
+        benefit1 = (case_factors[priority[1]] - previous_case_factors[priority[1]])
         benefit2 = previous_case_factors['water'] - case_factors['water']
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
@@ -161,53 +208,6 @@ def calc_totals(case, custom_factors, step, dca_info):
     factors = build_case_factors(case, custom_factors, step)
     return factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
-def build_factor_tables():
-    dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
-            usecols="A,C,D,E,F,G,H", \
-            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
-    dcm_factors.set_index('dcm', inplace=True)
-    # build up custom habitat and water factor tables
-    custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
-            usecols="A,B,C,D,E,F,G,H,I", \
-            names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
-    custom_info.set_index(['dca', 'dcm'], inplace=True)
-    custom_filled = custom_info.apply(backfill, axis=1, \
-            backfill_data=dcm_factors, \
-            columns_list=['bw', 'mw', 'pl', 'ms', 'md', 'water'])
-    custom_steps = ['base', 'dwm', 'step0', 'mp']
-    factors = {x: build_custom_steps(x, custom_steps, custom_filled) \
-            for x in custom_steps}
-    factors['dcm'] = dcm_factors.copy()
-    return factors
-
-def read_dca_info():
-    dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
-            usecols="A,B,D,F", \
-            names=["dca", "area_ac", "base", "step0"])
-    dca_info['area_sqmi'] = dca_info['area_ac'] * 0.0015625
-    dca_info.set_index('dca', inplace=True)
-    return dca_info
-
-def read_past_status():
-    lake_case = {'base': [], 'step0': []}
-    for case in lake_case.keys():
-        assignments = [np.array(factors['dcm'].index.get_level_values('dcm')) \
-                == dca_info[case][x] for x in range(0, len(dca_info))]
-        assignments = [assignments[x].astype(int).tolist() \
-                for x in range(0, len(assignments))]
-        case_df = pd.DataFrame(assignments)
-        case_df.index = dca_info.index
-        case_df.columns = factors['dcm'].index.tolist()
-        lake_case[case] = case_df
-    return lake_case
-
-def define_soft():
-    soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
-            usecols="A").iloc[:, 0].tolist()[6:13]
-    soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
-    soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
-    return soft_idx
-
 def printout():
     readout = ""
     for x in new_percent.keys().tolist():
@@ -230,30 +230,35 @@ def printout():
                     + ", " + color.END
     return readout
 
-def check_exceed(percents, limits, upper_buffer, lower_buffer):
+def check_exceed(percents, limits, buffer):
     exceed_flag = {x: 'ok' for x in percents.keys().tolist() \
             if x != 'water'}
     for x in exceed_flag.keys():
-        upper_limit = limits[x] + upper_buffer
-        lower_limit = limits[x] - lower_buffer[x]
+        upper_limit = limits[x] + buffer['upper'][x]
+        lower_limit = limits[x] - buffer['lower'][x]
         if percents[x] > upper_limit:
             exceed_flag[x] = 'over'
         if percents[x] < lower_limit:
             exceed_flag[x] = 'under'
     return exceed_flag
 
-def get_lower_buffer(hard_transition):
-    avg_increase = {'bw': 0.17, 'mw': 0.21, 'pl': 0.27, 'ms': 0.48, 'md': 0.22}
-    lower_buffer = {x: max((hard_limit - hard_transition) * avg_increase[x] / \
-            (total['base'][x] * 0.0015625), 0) \
-            for x in total['base'].keys().tolist() if x != 'water'}
-    # do not want to be in the position of having to re-establish veg
-    lower_buffer['md'] = 0
-    return lower_buffer
+def get_buffer(hard_transition):
+    guild_std = {}
+    for guild in hab_limits.keys():
+        guild_std[guild] = factors['dcm'][guild].std()
+    buffer = {}
+    buffer['lower'] = {x: 0.75 * (hard_limit - hard_transition) * guild_std[x] / \
+            (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
+    buffer['upper'] = {x: 2 * (hard_limit - hard_transition) * guild_std[x] / \
+            (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
+    # meadow is hard to establish, do not want to reduce only to have to
+    # re-establish. Prevent meadow from dipping below target value.
+    buffer['lower']['md'] = 0
+    return buffer
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP LAUNCHPAD no constraints.xlsx"
+file_name = "MP LAUNCHPAD farm frozen.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 
 factors = build_factor_tables()
@@ -275,7 +280,6 @@ step_constraints.columns = range(1, 6)
 pref_input = mp_file.parse(sheet_name="MP Analysis Input", header=20, \
         usecols="A").iloc[:, 0].tolist()
 pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
-
 soft_idx = define_soft()
 
 # read limits and toggles
@@ -283,20 +287,15 @@ script_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
         usecols="B").iloc[:, 0].tolist()[0:4]
 hard_limit = script_input[0]
 soft_limit = script_input[1]
-dcm_limits = {}
-dcm_limits['Brine'] = script_input[2]
-dcm_limits['Sand Fences'] = script_input[3]
-hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", header=3, \
-        usecols="B").iloc[:, 0].tolist()[0:5]
-
-# set buffers and target adjustments
-upper_buffer = 0.05
-guilds = ['bw', 'mw', 'pl', 'ms', 'md']
+dcm_limits = {'Brine': script_input[2], 'Sand Fences': script_input[3]}
+hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", \
+        usecols="B,C").iloc[7:12, 0:2]
+hab_limits = dict(zip(hab_limit_input.iloc[:, 1].tolist(), \
+        hab_limit_input.iloc[:, 0].tolist()))
 # add fudge factor to keep guild area above target (if necessary)
 fudge_guilds = {}
 #fudge_guilds = {'ms': 0.02, 'mw': 0.02}
-hab_limits = dict(zip(guilds, hab_limit_input))
-for x in guilds:
+for x in hab_limits.keys():
     if x in fudge_guilds:
         hab_limits[x] = hab_limits[x] + fudge_guilds[x]
 
@@ -319,8 +318,8 @@ tracking = pd.DataFrame.from_items([('step', []), ('dca', []), ('from', []), \
         ('sand_fences', [])])
 tracking.index.name = 'change'
 priority = prioritize(new_percent, hab_limits)
-lower_buffer = get_lower_buffer(0)
-target_flag = check_exceed(new_percent, hab_limits, upper_buffer, lower_buffer)
+buffer = get_buffer(0)
+target_flag = check_exceed(new_percent, hab_limits, buffer)
 
 step_info = {}
 step_info['base'] = {'totals': total['base'],
@@ -343,8 +342,7 @@ dcm_area_tracking['Sand Fences'] = sand_fence_area
 change_counter = 0
 for step in range(1, 6):
     print 'step ' + str(step)
-    hard_transition = 0
-    soft_transition = 0
+    hard_transition, soft_transition = 0, 0
     # intialize area tracking for DCMs that have per step limits
     dcm_area_tracking['Brine'] = 0
     while hard_transition < hard_limit or soft_transition < soft_limit:
@@ -422,10 +420,22 @@ for step in range(1, 6):
                 case_factors = build_case_factors(test_case, factors, 'mp')
                 test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
                 test_percent = test_total/total['base']
-                lower_buffer = get_lower_buffer(hard_transition)
-                exceed_flag = check_exceed(test_percent, hab_limits, upper_buffer, \
-                        lower_buffer)
+                if best_change[4] == 'hard':
+                    new_hard = hard_transition + \
+                            dca_info.iloc[best_change[3]]['area_sqmi']
+                else:
+                    new_hard = hard_transition
+                buffer = get_buffer(new_hard)
+                exceed_flag = check_exceed(test_percent, hab_limits, buffer)
                 delta = {x: test_percent[x] - new_percent[x] for x in exceed_flag}
+                # do not want to establish any additional meadow
+                if delta['md'] > 0:
+                    print 'excessive meadow!'
+                    if best_change[4] == 'soft':
+                        soft_nn += 1
+                    else:
+                        hard_nn += 1
+                    continue
                 pass_continue = False
                 for hab in target_flag.keys():
                     if target_flag[hab] == 'ok':
@@ -497,9 +507,7 @@ for step in range(1, 6):
         change = change.append(new_percent)
         change.name = change_counter
         tracking = tracking.append(change)
-#        lower_buffer = get_lower_buffer(hard_transition)
-        target_flag = check_exceed(new_percent, hab_limits, upper_buffer, \
-                lower_buffer)
+        target_flag = check_exceed(new_percent, hab_limits, buffer)
     dca_water = dca_water.join(pd.DataFrame({'step' + str(step): \
             case_factors['water'].multiply(dca_info['area_ac'], axis=0)}))
     step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
@@ -547,7 +555,7 @@ for nm in summary.keys():
     tot = summary[nm].sum().rename('total')
     summary[nm] = summary[nm].append(tot)
     summary[nm].fillna(0, inplace=True)
-summary['dcm'] = summary['dcm'].loc[dcm_order].copy().drop('None')
+summary['dcm'] = summary['dcm'].reindex(dcm_order).copy().drop('None')
 hab2dcm.set_index('mp_name', inplace=True)
 summary['mp_name'] = summary['mp_name'].join(hab2dcm, how='right')
 summary['mp_name'].drop(['desc', 'hab_id', 'dust_dcm'], axis=1, inplace=True)
