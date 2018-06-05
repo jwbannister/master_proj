@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime
 import os
+from collections import OrderedDict
 from openpyxl import worksheet
 from openpyxl import load_workbook
 
@@ -131,6 +132,8 @@ def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factor
         smart = case_factors[priority[1]] - previous_case_factors[priority[1]] > 0
         benefit1 = (case_factors[priority[1]] - previous_case_factors[priority[1]])
         benefit2 = previous_case_factors['water'] - case_factors['water']
+ #   delta = {x: custom_factors['base'].loc[dca][x].item() - previous_case_factors[x] \
+ #           for x in custom_factors['base'].columns.tolist() if x != 'water'}
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
 def prioritize(value_percents, hab_minimums):
@@ -248,7 +251,7 @@ def get_buffer(hard_transition):
     buffer = {}
     buffer['lower'] = {x: 0.75 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
-    buffer['upper'] = {x: 2 * (hard_limit - hard_transition) * guild_std[x] / \
+    buffer['upper'] = {x: 3 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
     # meadow is hard to establish, do not want to reduce only to have to
     # re-establish. Prevent meadow from dipping below target value.
@@ -305,10 +308,9 @@ new_assignments = get_assignments(new_case, dca_list, dcm_list)
 case_factors = build_case_factors(new_case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
-tracking = pd.DataFrame.from_items([('step', []), ('dca', []), ('from', []), \
-        ('to', []), ('bw', []), ('mw', []), ('pl', []), ('ms', []), ('md', []), \
-        ('water', []), ('hard', []), ('soft', []), ('brine', []), \
-        ('sand_fences', [])])
+tracking = pd.DataFrame.from_dict({'step': [], 'dca': [], 'from': [], \
+        'to': [], 'bw': [], 'mw': [], 'pl': [], 'ms': [], 'md': [], \
+        'water': [], 'hard': [], 'soft': [], 'brine': [], 'sand_fences': []})
 tracking.index.name = 'change'
 priority = prioritize(new_percent, hab_limits)
 buffer = get_buffer(0)
@@ -394,11 +396,14 @@ for step in range(1, 6):
                 pass_continue = False
                 for hab in target_flag.keys():
                     if target_flag[hab] == 'ok':
-                        if exceed_flag[hab] == 'under' or exceed_flag[hab] == 'over':
-                            print try_number + hab + ": excursion " + exceed_flag[hab] + \
-                                    " target area range!"
-                            change_nn += 1
-                            pass_continue = True
+                        for violation in ['over', 'under']:
+                            if exceed_flag[hab] == violation:
+                                print try_number + hab + ": excursion " + violation + \
+                                        " target area range!"
+                                smart_cases = [x for x in smart_cases if \
+                                        x[5][hab] >= best_change[5][hab]]
+                                change_nn += 1
+                                pass_continue = True
                 if pass_continue:
                     continue
                 dcm_type = dcm_list[best_change[2].index(1)]
@@ -413,6 +418,10 @@ for step in range(1, 6):
                         dca_info.loc[best_change[3]]['area_sqmi'] > soft_limit:
                         change_nn += 1
                         print try_number + "soft transition limit exceeded"
+                        smart_cases = [x for x in smart_cases if \
+                                x[4] != 'soft' and \
+                                dca_info.loc[x[3]]['area_sqmi'] > \
+                                dca_info.loc[best_change[3]]['area_sqmi']]
                         continue
                     else:
                         soft_transition += dca_info.loc[best_change[3]]['area_sqmi']
@@ -425,6 +434,10 @@ for step in range(1, 6):
                         dca_info.loc[best_change[3]]['area_sqmi'] > hard_limit:
                         change_nn += 1
                         print try_number + "hard transition limit exceeded"
+                        smart_cases = [x for x in smart_cases if \
+                                x[4] != 'hard' and \
+                                dca_info.loc[x[3]]['area_sqmi'] > \
+                                dca_info.loc[best_change[3]]['area_sqmi']]
                         continue
                     else:
                         hard_transition += dca_info.loc[best_change[3]]['area_sqmi']
