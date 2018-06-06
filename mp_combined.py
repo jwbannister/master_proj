@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime
 import os
+import sys
 from collections import OrderedDict
 from openpyxl import worksheet
 from openpyxl import load_workbook
@@ -113,6 +114,15 @@ def define_soft():
     soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
     return soft_idx
 
+def get_area(dca_case, dca_name, custom_factors, dca_info, hab):
+    dcm_name = custom_factors['dcm'].index.tolist()[dca_case.index(1)]
+    if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors['mp'].index.tolist()]:
+       case_factors = custom_factors['mp'].loc[dca_name, dcm_name]
+    else:
+       case_factors = custom_factors['dcm'].iloc[dca_case.index(1)]
+    area = case_factors * dca_info.loc[dca_name]['area_ac']
+    return area[hab]
+
 def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
         priority, dca_name, dca_info, waterless_preferences):
     previous_case_factors = previous_factors.loc[previous_case.name]
@@ -130,8 +140,8 @@ def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factor
             benefit2 = -6
     else:
         smart = case_factors[priority[1]] - previous_case_factors[priority[1]] > 0
-        benefit1 = (case_factors[priority[1]] - previous_case_factors[priority[1]])
-        benefit2 = previous_case_factors['water'] - case_factors['water']
+        benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
+        benefit2 = case_factors[priority[2]] - previous_case_factors[priority[2]]
  #   delta = {x: custom_factors['base'].loc[dca][x].item() - previous_case_factors[x] \
  #           for x in custom_factors['base'].columns.tolist() if x != 'water'}
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
@@ -210,27 +220,46 @@ def calc_totals(case, custom_factors, step, dca_info):
     factors = build_case_factors(case, custom_factors, step)
     return factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
-def printout():
+def printout(flag):
     readout = ""
-    for x in new_percent.keys().tolist():
-        if priority[1] == x:
-            pri = color.BOLD
-        else:
-            pri = ""
-        try:
-            if target_flag[x] == 'ok':
-                readout = readout + pri + color.GREEN + x + ": " + \
-                        str(round(new_percent[x], 3)) \
-                        + ", " + color.END
+    if flag == 'screen':
+        for x in new_percent.keys().tolist():
+            if priority[1] == x:
+                pri = color.BOLD
             else:
-                readout = readout + pri + color.RED + x + ": " + \
+                pri = ""
+            try:
+                if target_flag[x] == 'ok':
+                    readout = readout + pri + color.GREEN + x + ": " + \
+                            str(round(new_percent[x], 3)) \
+                            + ", " + color.END
+                else:
+                    readout = readout + pri + color.RED + x + ": " + \
+                            str(round(new_percent[x], 3)) \
+                            + ", " + color.END
+            except:
+                readout = readout + pri + x + ": " + \
                         str(round(new_percent[x], 3)) \
                         + ", " + color.END
-        except:
-            readout = readout + pri + x + ": " + \
-                    str(round(new_percent[x], 3)) \
-                    + ", " + color.END
-    return readout
+        return readout
+    else:
+        for x in new_percent.keys().tolist():
+            try:
+                if target_flag[x] == 'ok':
+                    readout = readout + x + ": " + \
+                            str(round(new_percent[x], 3)) \
+                            + ", "
+                else:
+                    readout = readout + x + ": " + \
+                            str(round(new_percent[x], 3)) \
+                            + ", "
+            except:
+                readout = readout + x + ": " + \
+                        str(round(new_percent[x], 3)) \
+                        + ", "
+        readout = readout + "priority1 = " + priority[1] + ", priority2 = " +\
+                priority[2]
+        return readout
 
 def check_exceed(percents, limits, buffer):
     exceed_flag = {x: 'ok' for x in percents.keys().tolist() \
@@ -244,30 +273,34 @@ def check_exceed(percents, limits, buffer):
             exceed_flag[x] = 'under'
     return exceed_flag
 
-def get_buffer(hard_transition):
+def get_buffer(hard_transition, percents):
     guild_std = {}
     for guild in hab_limits.keys():
         guild_std[guild] = factors['dcm'][guild].std()
     buffer = {}
-    buffer['lower'] = {x: 0.75 * (hard_limit - hard_transition) * guild_std[x] / \
+    buffer['lower'] = {x: 2 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
-    buffer['upper'] = {x: 3 * (hard_limit - hard_transition) * guild_std[x] / \
+    buffer['upper'] = {x: 2 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
     # meadow is hard to establish, do not want to reduce only to have to
-    # re-establish. Prevent meadow from dipping below target value.
+    # re-establish. Prevent meadow from dipping below target value and never
+    # add any more meadow
     buffer['lower']['md'] = 0
+    buffer['upper']['md'] = percents['md'] - hab_limits['md']
+    # buffer['upper'] = {x: 0.5 for x in hab_limits.keys()}
     return buffer
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
 file_name = "MP LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
+output_log = file_path + "output/" +file_name[:3] + "LOG " + \
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.txt'
+log_file = open(output_log, 'a')
 
 factors = build_factor_tables()
 dcm_list = factors['dcm'].index.tolist()
-
 dca_info = read_dca_info()
-
 lake_case = read_past_status()
 dca_list = lake_case['base'].index.get_level_values('dca').tolist()
 
@@ -282,6 +315,7 @@ step_constraints.columns = range(1, 6)
 pref_input = mp_file.parse(sheet_name="MP Analysis Input", header=20, \
         usecols="A").iloc[:, 0].tolist()
 pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
+
 soft_idx = define_soft()
 
 # read limits and toggles
@@ -302,18 +336,15 @@ total['base']['water'] = mp_file.parse(sheet_name="MP_new", header=None, \
         usecols="G").iloc[:, 0].tolist()[1]
 
 # initialize variables before loop
-new_constraints = start_constraints.copy()
-new_case = lake_case['step0'].copy()
-new_assignments = get_assignments(new_case, dca_list, dcm_list)
-case_factors = build_case_factors(new_case, factors, 'mp')
+constraints = start_constraints.copy()
+case = lake_case['step0'].copy()
+assignments = get_assignments(case, dca_list, dcm_list)
+assignments.columns = ["step0"]
+case_factors = build_case_factors(case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
-tracking = pd.DataFrame.from_dict({'step': [], 'dca': [], 'from': [], \
-        'to': [], 'bw': [], 'mw': [], 'pl': [], 'ms': [], 'md': [], \
-        'water': [], 'hard': [], 'soft': [], 'brine': [], 'sand_fences': []})
-tracking.index.name = 'change'
 priority = prioritize(new_percent, hab_limits)
-buffer = get_buffer(0)
+buffer = get_buffer(0, new_percent)
 target_flag = check_exceed(new_percent, hab_limits, buffer)
 
 step_info = {}
@@ -323,16 +354,18 @@ step_info['base'] = {'totals': total['base'],
         'assignments': get_assignments(lake_case['base'], dca_list, dcm_list)}
 step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard_transition': 0, 'soft_transition': 0, \
-        'assignments': new_assignments}
+        'assignments': assignments}
 
 dca_water = pd.DataFrame({'step0': case_factors['water'].multiply(dca_info['area_ac'], \
         axis=0)})
 
 # initialize area tracking for DCMs that have lakewide limits
 dcm_area_tracking = {}
-sand_fence_dcas = [x for x, y in enumerate(new_case['Sand Fences']) if y ==1]
+sand_fence_dcas = [x for x, y in enumerate(case['Sand Fences']) if y ==1]
 sand_fence_area = sum([dca_info['area_sqmi'][x] for x in sand_fence_dcas])
 dcm_area_tracking['Sand Fences'] = sand_fence_area
+
+tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
 change_counter = 0
 for step in range(1, 6):
@@ -341,12 +374,13 @@ for step in range(1, 6):
     dcm_area_tracking['Brine'] = 0
     while hard_transition < hard_limit or soft_transition < soft_limit:
         change_counter += 1
-        print "step " + str(step) + ", change " + str(change_counter) + \
+        output = "step " + str(step) + ", change " + str(change_counter) + \
                 ": hard/soft " + str(round(hard_transition, 2)) + "/" + \
                 str(round(soft_transition, 2))
-        print printout()
-        constraints = new_constraints.copy()
-        eval_case = new_case.copy()
+        print output
+        print printout('screen')
+        log_file.write(output + "\n")
+        log_file.write(printout('log') + "\n")
         smart_cases = []
         for dca in constraints.index:
             if step_constraints.loc[dca, step] != 0:
@@ -359,141 +393,135 @@ for step in range(1, 6):
                         flag='hard'
                     b = [0 for x in tmp]
                     b[dcm_ind] = 1
-                    case_eval = evaluate_dca_change(b, \
-                        eval_case.loc[dca], case_factors, factors, \
-                        priority, dca, dca_info, pref_dict)
+                    case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
+                            factors, priority, dca, dca_info, pref_dict)
                     if case_eval['smart']:
+                        areas = {x: get_area(b, dca, factors, dca_info, x) \
+                                for x in target_flag.keys()}
                         change = (case_eval['benefit1'], case_eval['benefit2'], b, \
-                                dca, flag)
+                                dca, flag, areas)
                         smart_cases.append(change)
         smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
                 reverse=True)
-
-        change_nn = 0
-        total_options = len(smart_cases)
         try:
+            hab_checks = target_flag.keys()
             while True:
-                try_number = str(change_nn + 1) + "/" + str(total_options) + " "
-                best_change = smart_cases[change_nn]
-                test_case = eval_case.copy()
+                possible_changes = len(smart_cases)
+                best_change = smart_cases[0]
+                test_case = case.copy()
                 test_case.loc[best_change[3]] = np.array(best_change[2])
                 case_factors = build_case_factors(test_case, factors, 'mp')
                 test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
                 test_percent = test_total/total['base']
                 if best_change[4] == 'hard':
-                    new_hard = hard_transition + \
+                    test_hard = hard_transition + \
                             dca_info.loc[best_change[3]]['area_sqmi']
                 else:
-                    new_hard = hard_transition
-                buffer = get_buffer(new_hard)
-                exceed_flag = check_exceed(test_percent, hab_limits, buffer)
-                delta = {x: test_percent[x] - new_percent[x] for x in exceed_flag}
-                # do not want to establish any additional meadow
-                if delta['md'] > 0:
-                    print try_number + ': Excessive meadow re-establishment!'
-                    change_nn += 1
-                    continue
+                    test_hard = hard_transition
+                buffer = get_buffer(test_hard, new_percent)
+                violate_flag = check_exceed(test_percent, hab_limits, buffer)
+                # check whether any guild go beyond change buffers
+                bc_area = {x: get_area(best_change[2], best_change[3], factors, \
+                        dca_info, x) for x in target_flag.keys()}
                 pass_continue = False
-                for hab in target_flag.keys():
-                    if target_flag[hab] == 'ok':
-                        for violation in ['over', 'under']:
-                            if exceed_flag[hab] == violation:
-                                print try_number + hab + ": excursion " + violation + \
-                                        " target area range!"
-                                smart_cases = [x for x in smart_cases if \
-                                        x[5][hab] >= best_change[5][hab]]
-                                change_nn += 1
-                                pass_continue = True
+                for hab in hab_checks:
+                    if target_flag[hab] == 'ok' and violate_flag[hab] != 'ok':
+                        if violate_flag[hab] == 'over':
+                            smart_cases = [x for x in smart_cases if \
+                                    x[5][hab] <= bc_area[hab]]
+                            hab_checks = [x for x in hab_checks if x != hab]
+                        if violate_flag[hab] == 'under':
+                            smart_cases = [x for x in smart_cases if \
+                                    x[5][hab] > bc_area[hab]]
+                        output = "eliminating " + \
+                                str(possible_changes - len(smart_cases)) + " of " + \
+                                str(possible_changes) + " possible changes." + " (" + \
+                                hab + " pushed " + violate_flag[hab] + \
+                                " target area range)"
+                        print output
+                        log_file.write(output + "\n")
+                        pass_continue = True
                 if pass_continue:
                     continue
-                dcm_type = dcm_list[best_change[2].index(1)]
-                if dcm_type in dcm_limits.keys():
-                    if dca_info.loc[best_change[3]]['area_sqmi'] + \
-                            dcm_area_tracking[dcm_type] > dcm_limits[dcm_type]:
-                        change_nn += 1
-                        print try_number + dcm_type + " area exceeded!"
-                        continue
+#                dcm_type = dcm_list[best_change[2].index(1)]
+#                if dcm_type in dcm_limits.keys():
+#                    if dca_info.loc[best_change[3]]['area_sqmi'] + \
+#                            dcm_area_tracking[dcm_type] > dcm_limits[dcm_type]:
+#                        print try_number + dcm_type + " area exceeded!"
+#                        continue
                 if best_change[4] == 'soft':
                     if soft_transition + \
                         dca_info.loc[best_change[3]]['area_sqmi'] > soft_limit:
-                        change_nn += 1
-                        print try_number + "soft transition limit exceeded"
                         smart_cases = [x for x in smart_cases if \
                                 x[4] != 'soft' and \
                                 dca_info.loc[x[3]]['area_sqmi'] > \
                                 dca_info.loc[best_change[3]]['area_sqmi']]
+                        output = "eliminating " + str(possible_changes - len(smart_cases)) + \
+                                " of " + str(possible_changes) + " possible changes." + \
+                                " (soft transition limit exceeded)"
+                        print output
+                        log_file.write(output + "\n")
                         continue
                     else:
                         soft_transition += dca_info.loc[best_change[3]]['area_sqmi']
-                        if dcm_type in dcm_limits.keys():
-                            dcm_area_tracking[dcm_type] += \
-                                    dca_info.loc[best_change[3]]['area_sqmi']
+#                        if dcm_type in dcm_limits.keys():
+#                            dcm_area_tracking[dcm_type] += \
+#                                    dca_info.loc[best_change[3]]['area_sqmi']
                         break
                 else:
                     if hard_transition + \
                         dca_info.loc[best_change[3]]['area_sqmi'] > hard_limit:
-                        change_nn += 1
-                        print try_number + "hard transition limit exceeded"
                         smart_cases = [x for x in smart_cases if \
                                 x[4] != 'hard' and \
                                 dca_info.loc[x[3]]['area_sqmi'] > \
                                 dca_info.loc[best_change[3]]['area_sqmi']]
+                        output = "eliminating " + str(possible_changes - len(smart_cases)) + \
+                                " of " + str(possible_changes) + " possible changes." + \
+                                " (hard transition limit exceeded)"
+                        print output
+                        log_file.write(output + "\n")
                         continue
                     else:
                         hard_transition += dca_info.loc[best_change[3]]['area_sqmi']
-                        if dcm_type in dcm_limits.keys():
-                            dcm_area_tracking[dcm_type] += \
-                                    dca_info.loc[best_change[3]]['area_sqmi']
+#                        if dcm_type in dcm_limits.keys():
+#                            dcm_area_tracking[dcm_type] += \
+#                                    dca_info.loc[best_change[3]]['area_sqmi']
                         break
         except:
             break
-
-        new_case = eval_case.copy()
-        new_case.loc[best_change[3]] = np.array(best_change[2])
-        new_constraints = constraints.copy()
-        new_constraints.loc[best_change[3]] = np.array(best_change[2])
-        new_assignments = get_assignments(new_case, dca_list, dcm_list)
-        case_factors = build_case_factors(new_case, factors, 'mp')
+        prior_assignment = case.loc[best_change[3]].tolist()
+        prior_dcm = case.columns.tolist()[prior_assignment.index(1)]
+        case.loc[best_change[3]] = np.array(best_change[2])
+        constraints.loc[best_change[3]] = np.array(best_change[2])
+        assignments = get_assignments(case, dca_list, dcm_list)
+        assignments.columns = ["step"+str(step)]
         new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/total['base']
         priority = prioritize(new_percent, hab_limits)
-        change = pd.Series({'step': step, \
-                'dca': best_change[3], \
-                'from': eval_case.columns.tolist()[\
-                            eval_case.loc[best_change[3]].tolist().index(1)],
-                'to': eval_case.columns.tolist()[best_change[2].index(1)],
-                'hard': hard_transition, \
-                'soft': soft_transition,
-                'brine': dcm_area_tracking['Brine'],
-                'sand_fences': dcm_area_tracking['Sand Fences']})
-        change = change.append(new_percent)
-        change.name = change_counter
-        tracking = tracking.append(change)
-        buffer = get_buffer(hard_transition)
+        buffer = get_buffer(hard_transition, new_percent)
         target_flag = check_exceed(new_percent, hab_limits, buffer)
-#    dca_water = dca_water.join(pd.DataFrame({'step' + str(step): \
-#            case_factors['water'].multiply(dca_info['area_ac'], axis=0)}))
-#    step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
-#            'hard': hard_transition, \
-#            'soft': soft_transition, \
-#            'assignments': new_assignments}
+        log_file.write(best_change[3] + " from " + prior_dcm + " to " + \
+            case.columns.tolist()[best_change[2].index(1)] + "\n")
+        tracking = tracking.append({'dca': best_change[3], \
+                'mp': case.columns.tolist()[best_change[2].index(1)], \
+                'step': step}, ignore_index=True)
+    step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
+            'hard': hard_transition, \
+            'soft': soft_transition, \
+            'assignments': assignments}
 total_water_savings = total['step0']['water'] - new_total['water']
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
-assignment_output = new_assignments.copy()
-assignment_output['step'] = 0
+
+tracking = tracking.set_index('dca', drop=True)
+assignment_output = step_info[0]['assignments']
 for i in range(1, 6):
-    changes = [x for x in tracking.loc[tracking['step']==i, 'dca']]
-    flag = [x in changes for x in assignment_output.index.tolist()]
-    assignment_output.loc[flag, 'step'] = i
-assignment_output['step0'] = (get_assignments(lake_case['step0'], dca_list, dcm_list))
-assignment_output.columns = ['mp', 'step', 'step0']
-assignment_output.index.name = 'dca'
-dca_changes = zip(assignment_output['step0'], assignment_output['step'], \
-        assignment_output['mp'])
-for i in ['1', '2', '3', '4', '5']:
-    assignment_output['step'+i] = [x[2] if x[1] <= int(i) else x[0] \
-            for x in dca_changes]
+    assignment_output["step"+str(i)] = step_info[i]['assignments']
+assignment_output = assignment_output.join(tracking)
+assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
+        zip(assignment_output['step5'], assignment_output['mp'])]
+assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
+        assignment_output['step']]
 output_csv = file_path + "output/mp_steps " + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
 assignment_output.to_csv(output_csv)
@@ -555,7 +583,6 @@ book = load_workbook(filename=output_excel)
 writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
-tracking.to_excel(writer, sheet_name='Script Output - DCA Changes')
 
 writer.save()
 
