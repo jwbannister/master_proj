@@ -278,9 +278,9 @@ def get_buffer(hard_transition, percents):
     for guild in hab_limits.keys():
         guild_std[guild] = factors['dcm'][guild].std()
     buffer = {}
-    buffer['lower'] = {x: 2 * (hard_limit - hard_transition) * guild_std[x] / \
+    buffer['lower'] = {x: 1 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
-    buffer['upper'] = {x: 2 * (hard_limit - hard_transition) * guild_std[x] / \
+    buffer['upper'] = {x: 3 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
     # meadow is hard to establish, do not want to reduce only to have to
     # re-establish. Prevent meadow from dipping below target value and never
@@ -296,6 +296,8 @@ file_name = "MP LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 output_log = file_path + "output/" +file_name[:3] + "LOG " + \
         datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.txt'
+output_excel = file_path + "output/" +file_name[:3] + \
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 log_file = open(output_log, 'a')
 
 factors = build_factor_tables()
@@ -576,8 +578,6 @@ for i in range(0, len(summary['dcm']), 1):
 for i in range(0, len(summary['mp_name']), 1):
     for j in range(0, 6):
         ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
-output_excel = file_path + "output/" +file_name[:3] + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
 wb.save(output_excel)
 book = load_workbook(filename=output_excel)
 writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
