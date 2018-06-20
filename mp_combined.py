@@ -7,6 +7,7 @@ import sys
 from collections import OrderedDict
 from openpyxl import worksheet
 from openpyxl import load_workbook
+from itertools import compress
 
 class color:
    PURPLE = '\033[95m'
@@ -139,11 +140,12 @@ def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factor
         except:
             benefit2 = -6
     else:
-        smart = case_factors[priority[1]] - previous_case_factors[priority[1]] > 0
-        benefit1 = case_factors[priority[1]] - previous_case_factors[priority[1]]
-        benefit2 = case_factors[priority[2]] - previous_case_factors[priority[2]]
- #   delta = {x: custom_factors['base'].loc[dca][x].item() - previous_case_factors[x] \
- #           for x in custom_factors['base'].columns.tolist() if x != 'water'}
+        p1_increase = case_factors[priority[1]] - previous_case_factors[priority[1]]
+        water_increase = 100 + (case_factors['water'] - previous_case_factors['water'])
+        smart = p1_increase > 0
+        benefit1 = p1_increase / water_increase
+        p2_increase = case_factors[priority[2]] - previous_case_factors[priority[2]]
+        benefit2 = p2_increase / water_increase
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
 def prioritize(value_percents, hab_minimums):
@@ -285,10 +287,20 @@ def get_buffer(hard_transition, percents):
     # meadow is hard to establish, do not want to reduce only to have to
     # re-establish. Prevent meadow from dipping below target value and never
     # add any more meadow
+    buffer['upper'] = {x: 1 for x in hab_limits.keys()}
     buffer['lower']['md'] = 0
     buffer['upper']['md'] = percents['md'] - hab_limits['md']
-    # buffer['upper'] = {x: 0.5 for x in hab_limits.keys()}
     return buffer
+
+def set_constraint(axis, idx, new_constraint, constraint_df):
+    new = new_constraint
+    if axis == 1:
+        existing = constraint_df.loc[idx].tolist()
+        constraint_df.loc[idx] = [min(x, y) for x, y in zip(new, existing)]
+    else:
+        existing = constraint_df[idx]
+        constraint_df[idx] = [min(x, y) for x, y in zip(new, existing)]
+    return constraint_df
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
@@ -301,39 +313,90 @@ output_excel = file_path + "output/" +file_name[:3] + \
 log_file = open(output_log, 'a')
 
 factors = build_factor_tables()
-dcm_list = factors['dcm'].index.tolist()
 dca_info = read_dca_info()
-lake_case = read_past_status()
-dca_list = lake_case['base'].index.get_level_values('dca').tolist()
-
-# read in DCA - DCM constraints
-constraints_input = mp_file.parse(sheet_name="Constraints", header=8, \
-        usecols="A:AK")
-start_constraints = constraints_input.iloc[:, :31]
-step_constraints = constraints_input.iloc[:, 31:]
-step_constraints.columns = range(1, 6)
+dca_list = dca_info.index.tolist()
+dcm_list = factors['dcm'].index.tolist()
+hab_terms = ['BWF', 'MWF', 'SNPL', 'MSB', 'Meadow']
+hdcm_identify = [any([y in x for y in hab_terms]) for x in dcm_list]
+hdcm_list = list(compress(dcm_list, hdcm_identify))
 
 # read and set preferences for waterless DCMs
-pref_input = mp_file.parse(sheet_name="MP Analysis Input", header=20, \
+waterless_input = mp_file.parse(sheet_name="MP Analysis Input", header=19, \
         usecols="A").iloc[:, 0].tolist()
-pref_dict = {x:-y for x, y in zip(pref_input, range(1, 6))}
-
+waterless_dict = {x:-y for x, y in zip(waterless_input, range(1, 6))}
+# generate list of "soft transition" DCMS
 soft_idx = define_soft()
-
 # read limits and toggles
 script_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
         usecols="B").iloc[:, 0].tolist()[0:4]
 hard_limit = script_input[0]
 soft_limit = script_input[1]
-dcm_limits = {'Brine': script_input[2], 'Sand Fences': script_input[3]}
+dcm_limits = {'Brine': script_input[2]}
 hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", \
-        usecols="B,C").iloc[7:12, 0:2]
+        usecols="B,C").iloc[6:11, 0:2]
 hab_limits = dict(zip(hab_limit_input.iloc[:, 1].tolist(), \
         hab_limit_input.iloc[:, 0].tolist()))
 
+# initialize constraints tables
+start_constraints = pd.DataFrame(np.ones((len(dca_list), len(dcm_list)), \
+        dtype=np.int8))
+start_constraints.index = dca_list
+start_constraints.columns = dcm_list
+step_constraints = pd.DataFrame(np.ones((len(dca_list), 5), dtype=np.int8))
+step_constraints.index = dca_list
+step_constraints.columns = range(1, 6)
+
+# hard-wired constraints
+# nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
+new = [1 if 'Channel' in x else 0 for x in dca_list]
+start_constraints = set_constraint(0, 'ENV', new, start_constraints)
+# Channel areas to remain unchanged
+for dca in ['Channel Area North', 'Channel Area South']:
+    new = [1 if x == 'ENV' else 0 for x in dcm_list]
+    start_constraints = set_constraint(1, dca, new, start_constraints)
+# no additional sand fences besides existing T1A1
+new = [1 if x == 'T1A-1' else 0 for x in dca_list]
+start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
+# DCAs currently designated as HDCM to remain unchanged
+current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
+for dca in current_hab.index:
+    new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
+    start_constraints = set_constraint(1, dca, new, start_constraints)
+# all DCAs currently under waterless DCM should remain unchanged
+waterless = dca_info.loc[[x in waterless_dict.keys() for x in dca_info['step0']]]
+for dca in waterless.index:
+    new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
+    start_constraints = set_constraint(1, dca, new, start_constraints)
+# all DCAs under dust control, no "None" DCMs allowed
+new = [0 for x in dca_list]
+start_constraints = set_constraint(0, 'None', new, start_constraints)
+
+# read in and implement Ops constraints from LAUNCHPAD
+constraints_input = mp_file.parse(sheet_name="Constraints", header=11, \
+        usecols="A:N")
+constraints_input.rename(columns={'DCM Constraints': 'dca'}, inplace=True)
+constraints_input.set_index('dca', inplace=True)
+step_start = ['Step' in str(x) for \
+        x in constraints_input.index.tolist()].index(True)
+dcm_constraint_input = constraints_input.iloc[:step_start, :].dropna(how='all')
+step_constraint_input = constraints_input.iloc[step_start+1:, :].dropna(how='all')
+for dca in dcm_constraint_input.index:
+    not_allowed = dcm_constraint_input.loc[dca].dropna().tolist()
+    for dcm in not_allowed:
+        new = [0 if x == dcm else 1 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
+for dca in step_constraint_input.index:
+    not_allowed = step_constraint_input.loc[dca].dropna().tolist()
+    for step in not_allowed:
+        new = [0 if x == step else 1 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints)
+
+# read in past DCA/DCM assignments from LAUNCHPAD
+lake_case = read_past_status()
 total = {}
 for case in lake_case.keys():
     total[case] = calc_totals(lake_case[case], factors, case, dca_info)
+# base case water demand is hard-wired
 total['base']['water'] = mp_file.parse(sheet_name="MP_new", header=None, \
         usecols="G").iloc[:, 0].tolist()[1]
 
@@ -361,19 +424,13 @@ step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
 dca_water = pd.DataFrame({'step0': case_factors['water'].multiply(dca_info['area_ac'], \
         axis=0)})
 
-# initialize area tracking for DCMs that have lakewide limits
-dcm_area_tracking = {}
-sand_fence_dcas = [x for x, y in enumerate(case['Sand Fences']) if y ==1]
-sand_fence_area = sum([dca_info['area_sqmi'][x] for x in sand_fence_dcas])
-dcm_area_tracking['Sand Fences'] = sand_fence_area
-
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
 change_counter = 0
 for step in range(1, 6):
     # intialize step area limits
     hard_transition, soft_transition = 0, 0
-    dcm_area_tracking['Brine'] = 0
+    dcm_area_tracking = {'Brine': 0}
     while hard_transition < hard_limit or soft_transition < soft_limit:
         change_counter += 1
         output = "step " + str(step) + ", change " + str(change_counter) + \
@@ -384,7 +441,7 @@ for step in range(1, 6):
         log_file.write(output + "\n")
         log_file.write(printout('log') + "\n")
         smart_cases = []
-        for dca in constraints.index:
+        for dca in dca_list:
             if step_constraints.loc[dca, step] != 0:
                 tmp = constraints.loc[dca].tolist()
                 tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
@@ -396,7 +453,7 @@ for step in range(1, 6):
                     b = [0 for x in tmp]
                     b[dcm_ind] = 1
                     case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
-                            factors, priority, dca, dca_info, pref_dict)
+                            factors, priority, dca, dca_info, waterless_dict)
                     if case_eval['smart']:
                         areas = {x: get_area(b, dca, factors, dca_info, x) \
                                 for x in target_flag.keys()}
@@ -445,12 +502,6 @@ for step in range(1, 6):
                         pass_continue = True
                 if pass_continue:
                     continue
-#                dcm_type = dcm_list[best_change[2].index(1)]
-#                if dcm_type in dcm_limits.keys():
-#                    if dca_info.loc[best_change[3]]['area_sqmi'] + \
-#                            dcm_area_tracking[dcm_type] > dcm_limits[dcm_type]:
-#                        print try_number + dcm_type + " area exceeded!"
-#                        continue
                 if best_change[4] == 'soft':
                     if soft_transition + \
                         dca_info.loc[best_change[3]]['area_sqmi'] > soft_limit:
