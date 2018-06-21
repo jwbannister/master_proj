@@ -110,18 +110,18 @@ def read_past_status():
 
 def define_soft():
     soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
-            usecols="A").iloc[:, 0].tolist()[6:13]
-    soft_dcms = [x for x in soft_dcm_input if x !=0][0:7]
+            usecols="A").iloc[:, 0].tolist()[5:12]
+    soft_dcms = [x for x in soft_dcm_input if x in dcm_list]
     soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
     return soft_idx
 
 def get_area(dca_case, dca_name, custom_factors, dca_info, hab):
-    dcm_name = custom_factors['dcm'].index.tolist()[dca_case.index(1)]
+    dcm_name = dcm_list[dca_case.index(1)]
     if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors['mp'].index.tolist()]:
        case_factors = custom_factors['mp'].loc[dca_name, dcm_name]
     else:
        case_factors = custom_factors['dcm'].iloc[dca_case.index(1)]
-    area = case_factors * dca_info.loc[dca_name]['area_ac']
+    area = case_factors * dca_info.loc[dca_name]['area_sqmi']
     return area[hab]
 
 def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
@@ -231,7 +231,7 @@ def printout(flag):
             else:
                 pri = ""
             try:
-                if target_flag[x] == 'ok':
+                if new_percent[x] >= hab_limits[x]:
                     readout = readout + pri + color.GREEN + x + ": " + \
                             str(round(new_percent[x], 3)) \
                             + ", " + color.END
@@ -246,22 +246,12 @@ def printout(flag):
         return readout
     else:
         for x in new_percent.keys().tolist():
-            try:
-                if target_flag[x] == 'ok':
-                    readout = readout + x + ": " + \
-                            str(round(new_percent[x], 3)) \
-                            + ", "
-                else:
-                    readout = readout + x + ": " + \
-                            str(round(new_percent[x], 3)) \
-                            + ", "
-            except:
-                readout = readout + x + ": " + \
-                        str(round(new_percent[x], 3)) \
-                        + ", "
+            readout = readout + x + ": " + \
+                    str(round(new_percent[x], 3)) \
+                    + ", "
         readout = readout + "priority1 = " + priority[1] + ", priority2 = " +\
                 priority[2]
-        return readout
+    return readout
 
 def check_exceed(percents, limits, buffer):
     exceed_flag = {x: 'ok' for x in percents.keys().tolist() \
@@ -275,19 +265,43 @@ def check_exceed(percents, limits, buffer):
             exceed_flag[x] = 'under'
     return exceed_flag
 
-def get_buffer(hard_transition, percents):
+def check_exceed_area(test_totals, new_totals, limits, guild_available):
+    exceed_flag = {x: 'ok' for x in guild_list if x != 'water'}
+    for x in exceed_flag.keys():
+        if (test_totals[x] + (guild_available[x] * 640)) / total['base'][x] < limits[x]:
+            exceed_flag[x] = 'under'
+    # meadow is hard to establish, do not want to reduce only to have to
+    # re-establish. Prevent meadow from dipping below target value and never
+    # add any more meadow
+    if test_totals['md'] / total['base']['md'] < limits['md']:
+        exceed_flag['md'] = 'under'
+    if test_totals['md'] > new_totals['md'] :
+        exceed_flag['md'] = 'over'
+    return exceed_flag
+
+def get_buffer_old(hard_transition, percents):
     guild_std = {}
     for guild in hab_limits.keys():
         guild_std[guild] = factors['dcm'][guild].std()
     buffer = {}
     buffer['lower'] = {x: 1 * (hard_limit - hard_transition) * guild_std[x] / \
             (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
-    buffer['upper'] = {x: 3 * (hard_limit - hard_transition) * guild_std[x] / \
-            (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
+    buffer['upper'] = {x: 1 for x in hab_limits.keys()}
     # meadow is hard to establish, do not want to reduce only to have to
     # re-establish. Prevent meadow from dipping below target value and never
     # add any more meadow
-    buffer['upper'] = {x: 1 for x in hab_limits.keys()}
+    buffer['lower']['md'] = 0
+    buffer['upper']['md'] = percents['md'] - hab_limits['md']
+    return buffer
+
+def get_buffer(guild_available, percents):
+    buffer = {}
+    buffer['lower'] = {x: guild_available[x] * 640 / total['base'][x] \
+            for x in guild_available.keys()}
+    buffer['upper'] = {x: 1 for x in guild_available.keys()}
+    # meadow is hard to establish, do not want to reduce only to have to
+    # re-establish. Prevent meadow from dipping below target value and never
+    # add any more meadow
     buffer['lower']['md'] = 0
     buffer['upper']['md'] = percents['md'] - hab_limits['md']
     return buffer
@@ -302,14 +316,43 @@ def set_constraint(axis, idx, new_constraint, constraint_df):
         constraint_df[idx] = [min(x, y) for x, y in zip(new, existing)]
     return constraint_df
 
+def get_guild_available(smart_cases):
+    guild_available = {}
+    available_hard = hard_limit - hard_transition
+    for hab in guild_list:
+        temp = []
+        for dca in set([x[3] for x in smart_cases[1:]]):
+            try:
+                temp.append(\
+                        sorted([[x[5][hab], dca_info.loc[dca]['area_sqmi']] \
+                        for x in smart_cases if x[3] == dca and \
+                        dca_info.loc[dca]['area_sqmi'] < available_hard], \
+                        reverse=True)[0])
+            except:
+                temp.append([0, 0])
+        temp = [x for x in sorted(temp, reverse=True) if x[1] < available_hard]
+        while sum([x[1] for x in temp]) > 0.5 * available_hard:
+            temp.pop()
+        guild_available[hab] = sum([x[0] for x in temp])
+    return guild_available
+
+# set option flags
+unconstrained_case = False
+freeze_farm = False
+file_flag = ""
+if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
+if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
+
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
 file_name = "MP LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 output_log = file_path + "output/" +file_name[:3] + "LOG " + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.txt'
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + file_flag + '.txt'
 output_excel = file_path + "output/" +file_name[:3] + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.xlsx'
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + file_flag + '.xlsx'
+output_csv = file_path + "output/mp_steps " + \
+        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + file_flag + '.csv'
 log_file = open(output_log, 'a')
 
 factors = build_factor_tables()
@@ -319,13 +362,16 @@ dcm_list = factors['dcm'].index.tolist()
 hab_terms = ['BWF', 'MWF', 'SNPL', 'MSB', 'Meadow']
 hdcm_identify = [any([y in x for y in hab_terms]) for x in dcm_list]
 hdcm_list = list(compress(dcm_list, hdcm_identify))
+guild_list = [x for x in factors['dcm'].columns if x != 'water']
 
 # read and set preferences for waterless DCMs
 waterless_input = mp_file.parse(sheet_name="MP Analysis Input", header=19, \
         usecols="A").iloc[:, 0].tolist()
 waterless_dict = {x:-y for x, y in zip(waterless_input, range(1, 6))}
+
 # generate list of "soft transition" DCMS
 soft_idx = define_soft()
+
 # read limits and toggles
 script_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
         usecols="B").iloc[:, 0].tolist()[0:4]
@@ -346,50 +392,57 @@ step_constraints = pd.DataFrame(np.ones((len(dca_list), 5), dtype=np.int8))
 step_constraints.index = dca_list
 step_constraints.columns = range(1, 6)
 
-# hard-wired constraints
-# nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
-new = [1 if 'Channel' in x else 0 for x in dca_list]
-start_constraints = set_constraint(0, 'ENV', new, start_constraints)
-# Channel areas to remain unchanged
-for dca in ['Channel Area North', 'Channel Area South']:
-    new = [1 if x == 'ENV' else 0 for x in dcm_list]
-    start_constraints = set_constraint(1, dca, new, start_constraints)
-# no additional sand fences besides existing T1A1
-new = [1 if x == 'T1A-1' else 0 for x in dca_list]
-start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
-# DCAs currently designated as HDCM to remain unchanged
-current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
-for dca in current_hab.index:
-    new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
-    start_constraints = set_constraint(1, dca, new, start_constraints)
-# all DCAs currently under waterless DCM should remain unchanged
-waterless = dca_info.loc[[x in waterless_dict.keys() for x in dca_info['step0']]]
-for dca in waterless.index:
-    new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
-    start_constraints = set_constraint(1, dca, new, start_constraints)
-# all DCAs under dust control, no "None" DCMs allowed
-new = [0 for x in dca_list]
-start_constraints = set_constraint(0, 'None', new, start_constraints)
-
-# read in and implement Ops constraints from LAUNCHPAD
-constraints_input = mp_file.parse(sheet_name="Constraints", header=11, \
-        usecols="A:N")
-constraints_input.rename(columns={'DCM Constraints': 'dca'}, inplace=True)
-constraints_input.set_index('dca', inplace=True)
-step_start = ['Step' in str(x) for \
-        x in constraints_input.index.tolist()].index(True)
-dcm_constraint_input = constraints_input.iloc[:step_start, :].dropna(how='all')
-step_constraint_input = constraints_input.iloc[step_start+1:, :].dropna(how='all')
-for dca in dcm_constraint_input.index:
-    not_allowed = dcm_constraint_input.loc[dca].dropna().tolist()
-    for dcm in not_allowed:
-        new = [0 if x == dcm else 1 for x in dcm_list]
+if not unconstrained_case:
+    # set hard-wired constraints
+    # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
+    new = [1 if 'Channel' in x else 0 for x in dca_list]
+    start_constraints = set_constraint(0, 'ENV', new, start_constraints)
+    # Channel areas to remain unchanged
+    for dca in ['Channel Area North', 'Channel Area South']:
+        new = [1 if x == 'ENV' else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
-for dca in step_constraint_input.index:
-    not_allowed = step_constraint_input.loc[dca].dropna().tolist()
-    for step in not_allowed:
-        new = [0 if x == step else 1 for x in range(1, 6)]
-        step_constraints = set_constraint(1, dca, new, step_constraints)
+    # no additional sand fences besides existing T1A1
+    new = [1 if x == 'T1A-1' else 0 for x in dca_list]
+    start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
+    # DCAs currently designated as HDCM to remain unchanged
+    current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
+    for dca in current_hab.index:
+        new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
+    # all DCAs currently under waterless DCM should remain unchanged
+    waterless = dca_info.loc[[x in waterless_dict.keys() for x in dca_info['step0']]]
+    for dca in waterless.index:
+        new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
+    # all DCAs under dust control, no "None" DCMs allowed
+    new = [0 for x in dca_list]
+    start_constraints = set_constraint(0, 'None', new, start_constraints)
+
+    # read in and implement Ops constraints from LAUNCHPAD
+    constraints_input = mp_file.parse(sheet_name="Constraints", header=11, \
+            usecols="A:N")
+    constraints_input.rename(columns={'DCM Constraints': 'dca'}, inplace=True)
+    constraints_input.set_index('dca', inplace=True)
+    step_start = ['Step' in str(x) for \
+            x in constraints_input.index.tolist()].index(True)
+    dcm_constraint_input = constraints_input.iloc[:step_start, :].dropna(how='all')
+    step_constraint_input = constraints_input.iloc[step_start+1:, :].dropna(how='all')
+    for dca in dcm_constraint_input.index:
+        not_allowed = dcm_constraint_input.loc[dca].dropna().tolist()
+        for dcm in not_allowed:
+            new = [0 if x == dcm else 1 for x in dcm_list]
+            start_constraints = set_constraint(1, dca, new, start_constraints)
+    for dca in step_constraint_input.index:
+        not_allowed = step_constraint_input.loc[dca].dropna().tolist()
+        for step in not_allowed:
+            new = [0 if x == step else 1 for x in range(1, 6)]
+            step_constraints = set_constraint(1, dca, new, step_constraints)
+
+if freeze_farm:
+    farm_dcas = dca_info.loc[[x == 'Veg 08' for x in dca_info['step0']]]
+    for dca in farm_dcas.index:
+        new = [1 if x == 'Veg 08' else 0 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
 
 # read in past DCA/DCM assignments from LAUNCHPAD
 lake_case = read_past_status()
@@ -409,8 +462,6 @@ case_factors = build_case_factors(case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
 priority = prioritize(new_percent, hab_limits)
-buffer = get_buffer(0, new_percent)
-target_flag = check_exceed(new_percent, hab_limits, buffer)
 
 step_info = {}
 step_info['base'] = {'totals': total['base'],
@@ -456,14 +507,18 @@ for step in range(1, 6):
                             factors, priority, dca, dca_info, waterless_dict)
                     if case_eval['smart']:
                         areas = {x: get_area(b, dca, factors, dca_info, x) \
-                                for x in target_flag.keys()}
+                                for x in guild_list}
                         change = (case_eval['benefit1'], case_eval['benefit2'], b, \
                                 dca, flag, areas)
                         smart_cases.append(change)
         smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
                 reverse=True)
+        guild_available = get_guild_available(smart_cases)
+#        buffer = get_buffer(guild_available, new_percent)
+#        target_flag = check_exceed(new_percent, hab_limits, buffer)
+        target_flag = check_exceed_area(new_total, new_total, hab_limits, guild_available)
         try:
-            hab_checks = target_flag.keys()
+            hab_checks = guild_list
             while True:
                 possible_changes = len(smart_cases)
                 best_change = smart_cases[0]
@@ -472,26 +527,23 @@ for step in range(1, 6):
                 case_factors = build_case_factors(test_case, factors, 'mp')
                 test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
                 test_percent = test_total/total['base']
-                if best_change[4] == 'hard':
-                    test_hard = hard_transition + \
-                            dca_info.loc[best_change[3]]['area_sqmi']
-                else:
-                    test_hard = hard_transition
-                buffer = get_buffer(test_hard, new_percent)
-                violate_flag = check_exceed(test_percent, hab_limits, buffer)
+                guild_available = get_guild_available(smart_cases)
+                violate_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
                 # check whether any guild go beyond change buffers
-                bc_area = {x: get_area(best_change[2], best_change[3], factors, \
-                        dca_info, x) for x in target_flag.keys()}
+                bc_area = best_change[5]
+                bc_old_area = {x: get_area(case.loc[best_change[3]].tolist(), best_change[3], \
+                        factors, dca_info, x) for x in guild_list}
                 pass_continue = False
                 for hab in hab_checks:
+                    bc_change = bc_area[hab] - bc_old_area[hab]
                     if target_flag[hab] == 'ok' and violate_flag[hab] != 'ok':
                         if violate_flag[hab] == 'over':
                             smart_cases = [x for x in smart_cases if \
-                                    x[5][hab] <= bc_area[hab]]
+                                    x[5][hab] - bc_old_area[hab] < bc_change]
                             hab_checks = [x for x in hab_checks if x != hab]
                         if violate_flag[hab] == 'under':
                             smart_cases = [x for x in smart_cases if \
-                                    x[5][hab] > bc_area[hab]]
+                                    x[5][hab] - bc_old_area[hab] > bc_change]
                         output = "eliminating " + \
                                 str(possible_changes - len(smart_cases)) + " of " + \
                                 str(possible_changes) + " possible changes." + " (" + \
@@ -506,8 +558,8 @@ for step in range(1, 6):
                     if soft_transition + \
                         dca_info.loc[best_change[3]]['area_sqmi'] > soft_limit:
                         smart_cases = [x for x in smart_cases if \
-                                x[4] != 'soft' and \
-                                dca_info.loc[x[3]]['area_sqmi'] > \
+                                x[4] != 'soft' or \
+                                dca_info.loc[x[3]]['area_sqmi'] < \
                                 dca_info.loc[best_change[3]]['area_sqmi']]
                         output = "eliminating " + str(possible_changes - len(smart_cases)) + \
                                 " of " + str(possible_changes) + " possible changes." + \
@@ -525,8 +577,8 @@ for step in range(1, 6):
                     if hard_transition + \
                         dca_info.loc[best_change[3]]['area_sqmi'] > hard_limit:
                         smart_cases = [x for x in smart_cases if \
-                                x[4] != 'hard' and \
-                                dca_info.loc[x[3]]['area_sqmi'] > \
+                                x[4] != 'hard' or \
+                                dca_info.loc[x[3]]['area_sqmi'] < \
                                 dca_info.loc[best_change[3]]['area_sqmi']]
                         output = "eliminating " + str(possible_changes - len(smart_cases)) + \
                                 " of " + str(possible_changes) + " possible changes." + \
@@ -551,8 +603,8 @@ for step in range(1, 6):
         new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/total['base']
         priority = prioritize(new_percent, hab_limits)
-        buffer = get_buffer(hard_transition, new_percent)
-        target_flag = check_exceed(new_percent, hab_limits, buffer)
+        buffer = get_buffer(guild_available, new_percent)
+        target_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
         log_file.write(best_change[3] + " from " + prior_dcm + " to " + \
             case.columns.tolist()[best_change[2].index(1)] + "\n")
         tracking = tracking.append({'dca': best_change[3], \
@@ -575,8 +627,6 @@ assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
         zip(assignment_output['step5'], assignment_output['mp'])]
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
-output_csv = file_path + "output/mp_steps " + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + '.csv'
 assignment_output.to_csv(output_csv)
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
