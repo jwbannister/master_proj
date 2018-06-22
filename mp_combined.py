@@ -161,22 +161,12 @@ def prioritize(value_percents, hab_minimums):
         return {1: 'water', 2: value_percents[0:5].idxmin()}
 
 def backfill(row, backfill_data, columns_list):
-    """
-    row = Series with index of columns_list and name (X, Y) where Y = backfill_factors.index
-    backfill_factors = DataFrame with all columns_list columns
-    columns_list = list
-    """
     for col in columns_list:
         if np.isnan(row[col]):
             row[col] = backfill_data.loc[row.name[1], col]
     return row
 
 def build_custom_steps(step, step_list, data):
-    """
-    step = string
-    step_list = list
-    data = DataFrame with column 'step'
-    """
     factors = data.loc[data['step']==step_list[0], :].copy()
     sub_steps = [step_list[x] for x in range(1, step_list.index(step)+1)]
     for sub in sub_steps:
@@ -262,18 +252,6 @@ def printout(flag):
                 priority[2]
     return readout
 
-def check_exceed(percents, limits, buffer):
-    exceed_flag = {x: 'ok' for x in percents.keys().tolist() \
-            if x != 'water'}
-    for x in exceed_flag.keys():
-        upper_limit = limits[x] + buffer['upper'][x]
-        lower_limit = limits[x] - buffer['lower'][x]
-        if percents[x] > upper_limit:
-            exceed_flag[x] = 'over'
-        if percents[x] < lower_limit:
-            exceed_flag[x] = 'under'
-    return exceed_flag
-
 def check_exceed_area(test_totals, new_totals, limits, guild_available):
     exceed_flag = {x: 'ok' for x in guild_list if x != 'water'}
     for x in exceed_flag.keys():
@@ -288,33 +266,6 @@ def check_exceed_area(test_totals, new_totals, limits, guild_available):
         if test_totals['md'] > new_totals['md'] :
             exceed_flag['md'] = 'over'
     return exceed_flag
-
-def get_buffer_old(hard_transition, percents):
-    guild_std = {}
-    for guild in hab_limits.keys():
-        guild_std[guild] = factors['dcm'][guild].std()
-    buffer = {}
-    buffer['lower'] = {x: 1 * (hard_limit - hard_transition) * guild_std[x] / \
-            (total['base'][x] * 0.0015625) for x in hab_limits.keys()}
-    buffer['upper'] = {x: 1 for x in hab_limits.keys()}
-    # meadow is hard to establish, do not want to reduce only to have to
-    # re-establish. Prevent meadow from dipping below target value and never
-    # add any more meadow
-    buffer['lower']['md'] = 0
-    buffer['upper']['md'] = percents['md'] - hab_limits['md']
-    return buffer
-
-def get_buffer(guild_available, percents):
-    buffer = {}
-    buffer['lower'] = {x: guild_available[x] * 640 / total['base'][x] \
-            for x in guild_available.keys()}
-    buffer['upper'] = {x: 1 for x in guild_available.keys()}
-    # meadow is hard to establish, do not want to reduce only to have to
-    # re-establish. Prevent meadow from dipping below target value and never
-    # add any more meadow
-    buffer['lower']['md'] = 0
-    buffer['upper']['md'] = percents['md'] - hab_limits['md']
-    return buffer
 
 def set_constraint(axis, idx, new_constraint, constraint_df):
     new = new_constraint
@@ -341,28 +292,29 @@ def get_guild_available(smart_cases):
             except:
                 temp.append([0, 0])
         temp = [x for x in sorted(temp, reverse=True) if x[1] < available_hard]
-        while sum([x[1] for x in temp]) > available_hard:
+        while sum([x[1] for x in temp]) > 0.8 * available_hard:
             temp.pop()
         guild_available[hab] = sum([x[0] for x in temp])
     return guild_available
 
 # set option flags
-unconstrained_case = False
+unconstrained_case = True
 freeze_farm = False
+factor_water = True
+preset_base_water = 73351
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
+if factor_water: file_flag = file_flag + " H20_ADJUST"
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
 file_name = "MP LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
-output_log = file_path + "output/" +file_name[:3] + "LOG " + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + file_flag + '.txt'
-output_excel = file_path + "output/" +file_name[:3] + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + file_flag + '.xlsx'
-output_csv = file_path + "output/mp_steps " + \
-        datetime.datetime.now().strftime('%m_%d_%y %H_%M') + file_flag + '.csv'
+timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
+output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
+output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
+output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
 log_file = open(output_log, 'a')
 
 factors = build_factor_tables()
@@ -458,12 +410,14 @@ if freeze_farm:
 
 # read in past DCA/DCM assignments from LAUNCHPAD
 lake_case = read_past_status()
+if factor_water:
+    calc_base_water = calc_totals(lake_case['base'], factors, 'base', dca_info).loc['water']
+    water_adjust = preset_base_water/calc_base_water
+    for step in factors.keys():
+        factors[step]['water'] = water_adjust * factors[step]['water']
 total = {}
 for case in lake_case.keys():
     total[case] = calc_totals(lake_case[case], factors, case, dca_info)
-# base case water demand is hard-wired
-total['base']['water'] = mp_file.parse(sheet_name="MP_new", header=None, \
-        usecols="G").iloc[:, 0].tolist()[1]
 
 # initialize variables before loop
 constraints = start_constraints.copy()
@@ -526,10 +480,6 @@ for step in range(1, 6):
                         smart_cases.append(change)
         smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
                 reverse=True)
-#        guild_available = get_guild_available(smart_cases)
-#        buffer = get_buffer(guild_available, new_percent)
-#        target_flag = check_exceed(new_percent, hab_limits, buffer)
-#        target_flag = check_exceed_area(new_total, new_total, hab_limits, guild_available)
         try:
             hab_checks = guild_list
             while True:
@@ -616,7 +566,6 @@ for step in range(1, 6):
         new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
         new_percent = new_total/total['base']
         priority = prioritize(new_percent, hab_limits)
-        buffer = get_buffer(guild_available, new_percent)
         target_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
         log_file.write(best_change[3] + " from " + prior_dcm + " to " + \
             case.columns.tolist()[best_change[2].index(1)] + "\n")
@@ -680,8 +629,6 @@ rw = 3
 col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
 for j in ['base', 0, 1, 2, 3, 4, 5]:
     for k in col_ind.keys():
-        if (j == 'base' and k == 'water'):
-            continue
         ws.cell(row=rw, column=col_ind[k]).value = step_info[j]['totals'][k]
     rw += 1
 # write area summary tables
