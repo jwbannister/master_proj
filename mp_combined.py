@@ -217,6 +217,15 @@ def build_case_factors(lake_case, custom_factors, stp):
     factors.set_index('dca', inplace=True)
     return factors
 
+def build_single_case_factors(dca_case, dca_name, custom_factors, stp):
+    factors = pd.DataFrame()
+    dcm_name = dcm_list[dca_case.index(1)]
+    try:
+        factors = custom_factors[stp].loc[(dca_name, dcm_name)]
+    except:
+        factors = custom_factors['dcm'].loc[dcm_name]
+    return factors
+
 def calc_totals(case, custom_factors, step, dca_info):
     dca_list = dca_info.index.tolist()
     factors = build_case_factors(case, custom_factors, step)
@@ -273,10 +282,11 @@ def check_exceed_area(test_totals, new_totals, limits, guild_available):
     # meadow is hard to establish, do not want to reduce only to have to
     # re-establish. Prevent meadow from dipping below target value and never
     # add any more meadow
-    if test_totals['md'] / total['base']['md'] < limits['md']:
-        exceed_flag['md'] = 'under'
-    if test_totals['md'] > new_totals['md'] :
-        exceed_flag['md'] = 'over'
+    if not unconstrained_case:
+        if test_totals['md'] / total['base']['md'] < limits['md']:
+            exceed_flag['md'] = 'under'
+        if test_totals['md'] > new_totals['md'] :
+            exceed_flag['md'] = 'over'
     return exceed_flag
 
 def get_buffer_old(hard_transition, percents):
@@ -331,7 +341,7 @@ def get_guild_available(smart_cases):
             except:
                 temp.append([0, 0])
         temp = [x for x in sorted(temp, reverse=True) if x[1] < available_hard]
-        while sum([x[1] for x in temp]) > 0.5 * available_hard:
+        while sum([x[1] for x in temp]) > available_hard:
             temp.pop()
         guild_available[hab] = sum([x[0] for x in temp])
     return guild_available
@@ -394,6 +404,8 @@ step_constraints.columns = range(1, 6)
 
 if not unconstrained_case:
     # set hard-wired constraints
+    # Constraint to only remove "Meadow" habitat is wired into
+    # check_exceed_area function
     # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     start_constraints = set_constraint(0, 'ENV', new, start_constraints)
@@ -506,17 +518,18 @@ for step in range(1, 6):
                     case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
                             factors, priority, dca, dca_info, waterless_dict)
                     if case_eval['smart']:
-                        areas = {x: get_area(b, dca, factors, dca_info, x) \
+                        single_case_factors = build_single_case_factors(b, dca, factors, 'mp')
+                        areas = {x: dca_info.loc[dca]['area_sqmi'] * single_case_factors[x] \
                                 for x in guild_list}
                         change = (case_eval['benefit1'], case_eval['benefit2'], b, \
                                 dca, flag, areas)
                         smart_cases.append(change)
         smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
                 reverse=True)
-        guild_available = get_guild_available(smart_cases)
+#        guild_available = get_guild_available(smart_cases)
 #        buffer = get_buffer(guild_available, new_percent)
 #        target_flag = check_exceed(new_percent, hab_limits, buffer)
-        target_flag = check_exceed_area(new_total, new_total, hab_limits, guild_available)
+#        target_flag = check_exceed_area(new_total, new_total, hab_limits, guild_available)
         try:
             hab_checks = guild_list
             while True:
@@ -527,23 +540,23 @@ for step in range(1, 6):
                 case_factors = build_case_factors(test_case, factors, 'mp')
                 test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
                 test_percent = test_total/total['base']
-                guild_available = get_guild_available(smart_cases)
+                other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
+                guild_available = get_guild_available(other_dca_smart_cases)
                 violate_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
-                # check whether any guild go beyond change buffers
                 bc_area = best_change[5]
                 bc_old_area = {x: get_area(case.loc[best_change[3]].tolist(), best_change[3], \
                         factors, dca_info, x) for x in guild_list}
                 pass_continue = False
                 for hab in hab_checks:
                     bc_change = bc_area[hab] - bc_old_area[hab]
-                    if target_flag[hab] == 'ok' and violate_flag[hab] != 'ok':
-                        if violate_flag[hab] == 'over':
-                            smart_cases = [x for x in smart_cases if \
-                                    x[5][hab] - bc_old_area[hab] < bc_change]
-                            hab_checks = [x for x in hab_checks if x != hab]
-                        if violate_flag[hab] == 'under':
-                            smart_cases = [x for x in smart_cases if \
-                                    x[5][hab] - bc_old_area[hab] > bc_change]
+                    if violate_flag[hab] == 'over':
+                        smart_cases = [x for x in smart_cases if \
+                                x[5][hab] - bc_old_area[hab] < bc_change]
+                        hab_checks = [x for x in hab_checks if x != hab]
+                        pass_continue = True
+                    if violate_flag[hab] == 'under' and bc_change <= 0:
+                        smart_cases = [x for x in smart_cases if \
+                                x[5][hab] - bc_old_area[hab] > 0]
                         output = "eliminating " + \
                                 str(possible_changes - len(smart_cases)) + " of " + \
                                 str(possible_changes) + " possible changes." + " (" + \
