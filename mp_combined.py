@@ -89,9 +89,8 @@ def build_factor_tables():
 
 def read_dca_info():
     dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
-            usecols="A,B,D,F", \
-            names=["dca", "area_ac", "base", "step0"])
-    dca_info['area_sqmi'] = dca_info['area_ac'] * 0.0015625
+            usecols="A,B,C,D,F", \
+            names=["dca", "area_ac", "area_sqmi", "base", "step0"])
     dca_info.set_index('dca', inplace=True)
     return dca_info
 
@@ -110,7 +109,7 @@ def read_past_status():
 
 def define_soft():
     soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
-            usecols="A").iloc[:, 0].tolist()[5:12]
+            usecols="A").iloc[:, 0].tolist()[4:11]
     soft_dcms = [x for x in soft_dcm_input if x in dcm_list]
     soft_idx = [x for x, y in enumerate(factors['dcm'].index.tolist()) if y in soft_dcms]
     return soft_idx
@@ -279,7 +278,7 @@ def set_constraint(axis, idx, new_constraint, constraint_df):
 
 def get_guild_available(smart_cases):
     guild_available = {}
-    available_hard = hard_limit - hard_transition
+    available_hard = trans_limits['hard'] - trans_area['hard']
     for hab in guild_list:
         temp = []
         for dca in set([x[3] for x in smart_cases[1:]]):
@@ -297,64 +296,17 @@ def get_guild_available(smart_cases):
         guild_available[hab] = sum([x[0] for x in temp])
     return guild_available
 
-# set option flags
-unconstrained_case = True
-freeze_farm = False
-factor_water = True
-preset_base_water = 73351
-file_flag = ""
-if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
-if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
-if factor_water: file_flag = file_flag + " H20_ADJUST"
+def initialize_constraints():
+    start_constraints = pd.DataFrame(np.ones((len(dca_list), len(dcm_list)), \
+            dtype=np.int8))
+    start_constraints.index = dca_list
+    start_constraints.columns = dcm_list
+    step_constraints = pd.DataFrame(np.ones((len(dca_list), 5), dtype=np.int8))
+    step_constraints.index = dca_list
+    step_constraints.columns = range(1, 6)
+    return start_constraints, step_constraints
 
-# read data from original Master Project planning workbook
-file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP LAUNCHPAD.xlsx"
-mp_file = pd.ExcelFile(file_path + file_name)
-timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
-output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
-output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
-output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
-log_file = open(output_log, 'a')
-
-factors = build_factor_tables()
-dca_info = read_dca_info()
-dca_list = dca_info.index.tolist()
-dcm_list = factors['dcm'].index.tolist()
-hab_terms = ['BWF', 'MWF', 'SNPL', 'MSB', 'Meadow']
-hdcm_identify = [any([y in x for y in hab_terms]) for x in dcm_list]
-hdcm_list = list(compress(dcm_list, hdcm_identify))
-guild_list = [x for x in factors['dcm'].columns if x != 'water']
-
-# read and set preferences for waterless DCMs
-waterless_input = mp_file.parse(sheet_name="MP Analysis Input", header=19, \
-        usecols="A").iloc[:, 0].tolist()
-waterless_dict = {x:-y for x, y in zip(waterless_input, range(1, 6))}
-
-# generate list of "soft transition" DCMS
-soft_idx = define_soft()
-
-# read limits and toggles
-script_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
-        usecols="B").iloc[:, 0].tolist()[0:4]
-hard_limit = script_input[0]
-soft_limit = script_input[1]
-dcm_limits = {'Brine': script_input[2]}
-hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", \
-        usecols="B,C").iloc[6:11, 0:2]
-hab_limits = dict(zip(hab_limit_input.iloc[:, 1].tolist(), \
-        hab_limit_input.iloc[:, 0].tolist()))
-
-# initialize constraints tables
-start_constraints = pd.DataFrame(np.ones((len(dca_list), len(dcm_list)), \
-        dtype=np.int8))
-start_constraints.index = dca_list
-start_constraints.columns = dcm_list
-step_constraints = pd.DataFrame(np.ones((len(dca_list), 5), dtype=np.int8))
-step_constraints.index = dca_list
-step_constraints.columns = range(1, 6)
-
-if not unconstrained_case:
+def update_constraints(start_constraints, step_constraints):
     # set hard-wired constraints
     # Constraint to only remove "Meadow" habitat is wired into
     # check_exceed_area function
@@ -401,12 +353,118 @@ if not unconstrained_case:
         for step in not_allowed:
             new = [0 if x == step else 1 for x in range(1, 6)]
             step_constraints = set_constraint(1, dca, new, step_constraints)
+    return start_constraints, step_constraints
+
+def generate_smart_changes():
+    smart_cases = []
+    for dca in dca_list:
+        if step_constraints.loc[dca, step] != 0:
+            tmp = constraints.loc[dca].tolist()
+            tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
+            for dcm_ind in tmp_ind:
+                if dcm_ind in soft_idx:
+                    flag = 'soft'
+                else:
+                    flag='hard'
+                b = [0 for x in tmp]
+                b[dcm_ind] = 1
+                case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
+                        factors, priority, dca, dca_info, waterless_dict)
+                if case_eval['smart']:
+                    new_case_factors = build_single_case_factors(b, dca, factors, 'mp')
+                    new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_case_factors[x] \
+                            for x in guild_list}
+                    old_case_factors = build_single_case_factors(case.loc[dca].tolist(), \
+                            dca, factors, 'mp')
+                    old_areas = {x: dca_info.loc[dca]['area_sqmi'] * old_case_factors[x] \
+                            for x in guild_list}
+                    guild_changes = {x: new_areas[x] - old_areas[x] \
+                            for x in guild_list}
+                    change = (case_eval['benefit1'], case_eval['benefit2'], b, \
+                            dca, flag, new_areas, guild_changes)
+                    smart_cases.append(change)
+    smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
+            reverse=True)
+    return smart_cases
+
+def check_guild_violations(smart_cases, best_change):
+    violate_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
+    violations = [x for x in guild_list \
+            if (violate_flag[x] == 'under' and best_change[6][x] < 0) \
+            or (violate_flag[x] == 'over' and best_change[6][x] > 0)]
+    if len(violations) == 0: return smart_cases, 'NA', 'NA'
+    hab = violations[0]
+    comp = {'over': lambda x,y: x < y, 'under':lambda x,y: x > y}
+    filtered_cases = [x for x in smart_cases if \
+            comp[violate_flag[hab]](x[6][hab], best_change[6][hab])]
+    return filtered_cases, hab, violate_flag[hab]
+
+# set option flags
+unconstrained_case = True
+freeze_farm = False
+mm_till = False
+factor_water = True
+preset_base_water = 73351
+file_flag = ""
+if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
+if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
+if factor_water: file_flag = file_flag + " H20_ADJUST"
+if mm_till: file_flag = file_flag + " MM_TILL"
+
+# read data from original Master Project planning workbook
+file_path = os.path.realpath(os.getcwd()) + "/"
+file_name = "MP LAUNCHPAD.xlsx"
+mp_file = pd.ExcelFile(file_path + file_name)
+timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
+output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
+output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
+output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
+log_file = open(output_log, 'a')
+
+factors = build_factor_tables()
+dca_info = read_dca_info()
+dca_list = dca_info.index.tolist()
+dcm_list = factors['dcm'].index.tolist()
+hab_terms = ['BWF', 'MWF', 'SNPL', 'MSB', 'Meadow']
+hdcm_identify = [any([y in x for y in hab_terms]) for x in dcm_list]
+hdcm_list = list(compress(dcm_list, hdcm_identify))
+guild_list = [x for x in factors['dcm'].columns if x != 'water']
+
+# read and set preferences for waterless DCMs
+waterless_input = mp_file.parse(sheet_name="MP Analysis Input", header=18, \
+        usecols="A").iloc[:, 0].tolist()
+waterless_dict = {x:-y for x, y in zip(waterless_input, range(1, 6))}
+
+# generate list of "soft transition" DCMS
+soft_idx = define_soft()
+
+# read limits and toggles
+trans_limit_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
+        usecols="B").iloc[:, 0].tolist()[0:4]
+trans_limits = {'hard': trans_limit_input[0], 'soft': trans_limit_input[1]}
+hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", \
+        usecols="B,C").iloc[5:10, 0:2]
+hab_limits = dict(zip(hab_limit_input.iloc[:, 1].tolist(), \
+        hab_limit_input.iloc[:, 0].tolist()))
+
+start_constraints, step_constraints = initialize_constraints()
+
+if not unconstrained_case:
+    start_constraints, step_constraints = \
+            update_constraints(start_constraints, step_constraints)
 
 if freeze_farm:
     farm_dcas = dca_info.loc[[x == 'Veg 08' for x in dca_info['step0']]]
     for dca in farm_dcas.index:
         new = [1 if x == 'Veg 08' else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
+
+if mm_till:
+    # remove tillage constraints as recommended by Mark Schaaf and Mica Heilmann
+    mm_list = ['T10-1', 'T10-1a', 'T13-1N', 'T13-1S', 'T17-1', 'T17-2', 'T2-5', \
+            'T29-2', 'T29-3', 'T29-4', 'T36-2E', 'T36-2W', 'T37-2', 'T9']
+    new = [1 if x in mm_list else 0 for x in dca_list]
+    start_constraints = set_constraint(0, 'Tillage', new, start_constraints)
 
 # read in past DCA/DCM assignments from LAUNCHPAD
 lake_case = read_past_status()
@@ -438,151 +496,92 @@ step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
         'hard_transition': 0, 'soft_transition': 0, \
         'assignments': assignments}
 
-dca_water = pd.DataFrame({'step0': case_factors['water'].multiply(dca_info['area_ac'], \
-        axis=0)})
-
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
 change_counter = 0
 for step in range(1, 6):
     # intialize step area limits
-    hard_transition, soft_transition = 0, 0
-    dcm_area_tracking = {'Brine': 0}
-    while hard_transition < hard_limit or soft_transition < soft_limit:
+    trans_area = {x: 0 for x in trans_limits.keys()}
+    retry = True
+    while retry:
         change_counter += 1
         output = "step " + str(step) + ", change " + str(change_counter) + \
-                ": hard/soft " + str(round(hard_transition, 2)) + "/" + \
-                str(round(soft_transition, 2))
+                ": hard/soft " + str(round(trans_area['hard'], 2)) + "/" + \
+                str(round(trans_area['soft'], 2))
         print output
         print printout('screen')
         log_file.write(output + "\n")
         log_file.write(printout('log') + "\n")
-        smart_cases = []
-        for dca in dca_list:
-            if step_constraints.loc[dca, step] != 0:
-                tmp = constraints.loc[dca].tolist()
-                tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
-                for dcm_ind in tmp_ind:
-                    if dcm_ind in soft_idx:
-                        flag = 'soft'
-                    else:
-                        flag='hard'
-                    b = [0 for x in tmp]
-                    b[dcm_ind] = 1
-                    case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
-                            factors, priority, dca, dca_info, waterless_dict)
-                    if case_eval['smart']:
-                        single_case_factors = build_single_case_factors(b, dca, factors, 'mp')
-                        areas = {x: dca_info.loc[dca]['area_sqmi'] * single_case_factors[x] \
-                                for x in guild_list}
-                        change = (case_eval['benefit1'], case_eval['benefit2'], b, \
-                                dca, flag, areas)
-                        smart_cases.append(change)
-        smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
-                reverse=True)
-        try:
-            hab_checks = guild_list
-            while True:
-                possible_changes = len(smart_cases)
-                best_change = smart_cases[0]
-                test_case = case.copy()
-                test_case.loc[best_change[3]] = np.array(best_change[2])
-                case_factors = build_case_factors(test_case, factors, 'mp')
-                test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
-                test_percent = test_total/total['base']
-                other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-                guild_available = get_guild_available(other_dca_smart_cases)
-                violate_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
-                bc_area = best_change[5]
-                bc_old_area = {x: get_area(case.loc[best_change[3]].tolist(), best_change[3], \
-                        factors, dca_info, x) for x in guild_list}
-                pass_continue = False
-                for hab in hab_checks:
-                    bc_change = bc_area[hab] - bc_old_area[hab]
-                    if violate_flag[hab] == 'over':
-                        smart_cases = [x for x in smart_cases if \
-                                x[5][hab] - bc_old_area[hab] < bc_change]
-                        hab_checks = [x for x in hab_checks if x != hab]
-                        pass_continue = True
-                    if violate_flag[hab] == 'under' and bc_change <= 0:
-                        smart_cases = [x for x in smart_cases if \
-                                x[5][hab] - bc_old_area[hab] > 0]
-                        output = "eliminating " + \
-                                str(possible_changes - len(smart_cases)) + " of " + \
-                                str(possible_changes) + " possible changes." + " (" + \
-                                hab + " pushed " + violate_flag[hab] + \
-                                " target area range)"
-                        print output
-                        log_file.write(output + "\n")
-                        pass_continue = True
-                if pass_continue:
-                    continue
-                if best_change[4] == 'soft':
-                    if soft_transition + \
-                        dca_info.loc[best_change[3]]['area_sqmi'] > soft_limit:
-                        smart_cases = [x for x in smart_cases if \
-                                x[4] != 'soft' or \
-                                dca_info.loc[x[3]]['area_sqmi'] < \
-                                dca_info.loc[best_change[3]]['area_sqmi']]
-                        output = "eliminating " + str(possible_changes - len(smart_cases)) + \
-                                " of " + str(possible_changes) + " possible changes." + \
-                                " (soft transition limit exceeded)"
-                        print output
-                        log_file.write(output + "\n")
-                        continue
-                    else:
-                        soft_transition += dca_info.loc[best_change[3]]['area_sqmi']
-#                        if dcm_type in dcm_limits.keys():
-#                            dcm_area_tracking[dcm_type] += \
-#                                    dca_info.loc[best_change[3]]['area_sqmi']
-                        break
-                else:
-                    if hard_transition + \
-                        dca_info.loc[best_change[3]]['area_sqmi'] > hard_limit:
-                        smart_cases = [x for x in smart_cases if \
-                                x[4] != 'hard' or \
-                                dca_info.loc[x[3]]['area_sqmi'] < \
-                                dca_info.loc[best_change[3]]['area_sqmi']]
-                        output = "eliminating " + str(possible_changes - len(smart_cases)) + \
-                                " of " + str(possible_changes) + " possible changes." + \
-                                " (hard transition limit exceeded)"
-                        print output
-                        log_file.write(output + "\n")
-                        continue
-                    else:
-                        hard_transition += dca_info.loc[best_change[3]]['area_sqmi']
-#                        if dcm_type in dcm_limits.keys():
-#                            dcm_area_tracking[dcm_type] += \
-#                                    dca_info.loc[best_change[3]]['area_sqmi']
-                        break
-        except:
+        smart_cases = generate_smart_changes()
+        retry = len(smart_cases) > 0
+        while len(smart_cases) > 0:
+            possible_changes = len(smart_cases)
+            best_change = smart_cases[0]
+            test_case = case.copy()
+            test_case.loc[best_change[3]] = np.array(best_change[2])
+            case_factors = build_case_factors(test_case, factors, 'mp')
+            test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
+            test_percent = test_total/total['base']
+            other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
+            guild_available = get_guild_available(other_dca_smart_cases)
+            if trans_area[best_change[4]] + \
+                dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
+                smart_cases = [x for x in smart_cases if \
+                        x[4] != best_change[4] or \
+                        dca_info.loc[x[3]]['area_sqmi'] < \
+                        trans_limits[best_change[4]] - trans_area[best_change[4]]]
+                output = "eliminating " + str(possible_changes - len(smart_cases)) + \
+                        " of " + str(possible_changes) + " possible changes." + \
+                        " (" + best_change[4] + " transition limit exceeded)"
+                print output
+                log_file.write(output + "\n")
+                retry = len(smart_cases) > 0
+                continue
+            smart_cases, hab, violation = check_guild_violations(smart_cases, best_change)
+            if len(smart_cases) < possible_changes:
+                output = "eliminating " + \
+                        str(possible_changes - len(smart_cases)) + " of " + \
+                        str(possible_changes) + " possible changes." + " (" + \
+                        hab + " pushed " + violation + " target area range)"
+                print output
+                log_file.write(output + "\n")
+                retry = len(smart_cases) > 0
+                continue
+            trans_area[best_change[4]] += dca_info.loc[best_change[3]]['area_sqmi']
+            prior_assignment = case.loc[best_change[3]].tolist()
+            prior_dcm = case.columns.tolist()[prior_assignment.index(1)]
+            case.loc[best_change[3]] = np.array(best_change[2])
+            constraints.loc[best_change[3]] = np.array(best_change[2])
+            assignments = get_assignments(case, dca_list, dcm_list)
+            assignments.columns = ["step"+str(step)]
+            new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
+            new_percent = new_total/total['base']
+            priority = prioritize(new_percent, hab_limits)
+            log_file.write(best_change[3] + " from " + prior_dcm + " to " + \
+                case.columns.tolist()[best_change[2].index(1)] + "\n")
+            tracking = tracking.append({'dca': best_change[3], \
+                    'mp': case.columns.tolist()[best_change[2].index(1)], \
+                    'step': step}, ignore_index=True)
             break
-        prior_assignment = case.loc[best_change[3]].tolist()
-        prior_dcm = case.columns.tolist()[prior_assignment.index(1)]
-        case.loc[best_change[3]] = np.array(best_change[2])
-        constraints.loc[best_change[3]] = np.array(best_change[2])
-        assignments = get_assignments(case, dca_list, dcm_list)
-        assignments.columns = ["step"+str(step)]
-        new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
-        new_percent = new_total/total['base']
-        priority = prioritize(new_percent, hab_limits)
-        target_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
-        log_file.write(best_change[3] + " from " + prior_dcm + " to " + \
-            case.columns.tolist()[best_change[2].index(1)] + "\n")
-        tracking = tracking.append({'dca': best_change[3], \
-                'mp': case.columns.tolist()[best_change[2].index(1)], \
-                'step': step}, ignore_index=True)
-    step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
-            'hard': hard_transition, \
-            'soft': soft_transition, \
-            'assignments': assignments}
+    if new_total['water'] < step_info[step-1]['totals']['water']:
+        step_info[step] = {'totals': step_info[step-1]['totals'], \
+                'percent_base': step_info[step-1]['percent_base'], \
+                'hard': 0, \
+                'soft': 0, \
+                'assignments': step_info[step-1]['assignments']}
+    else:
+        step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
+                'hard': trans_area['hard'], \
+                'soft': trans_area['soft'], \
+                'assignments': assignments}
+water_peak = max([step_info[x]['totals']['water'] for x in step_info.keys()])
 total_water_savings = total['step0']['water'] - new_total['water']
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
 tracking = tracking.set_index('dca', drop=True)
 assignment_output = step_info[0]['assignments']
-for i in range(1, 6):
+for i in range(0, 6):
     assignment_output["step"+str(i)] = step_info[i]['assignments']
 assignment_output = assignment_output.join(tracking)
 assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
@@ -627,17 +626,17 @@ for i in range(0, len(assignment_output), 1):
     ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
 rw = 3
 col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
-for j in ['base', 0, 1, 2, 3, 4, 5]:
+for j in step_info.keys():
     for k in col_ind.keys():
         ws.cell(row=rw, column=col_ind[k]).value = step_info[j]['totals'][k]
     rw += 1
 # write area summary tables
 ws = wb['Area Summary']
 for i in range(0, len(summary['dcm']), 1):
-    for j in range(0, 6):
+    for j in range(0, max(valid_steps)+1):
         ws.cell(row=i+5, column=j+2).value = int(summary['dcm'].iloc[i, j].round())
 for i in range(0, len(summary['mp_name']), 1):
-    for j in range(0, 6):
+    for j in range(0, max(valid_steps)+1):
         ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
 wb.save(output_excel)
 book = load_workbook(filename=output_excel)
