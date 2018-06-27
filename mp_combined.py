@@ -563,26 +563,28 @@ for step in range(1, 6):
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
             break
-    if new_total['water'] < step_info[step-1]['totals']['water']:
+    if new_total['water'] > step_info[step-1]['totals']['water']:
         step_info[step] = {'totals': step_info[step-1]['totals'], \
                 'percent_base': step_info[step-1]['percent_base'], \
                 'hard': 0, \
                 'soft': 0, \
                 'assignments': step_info[step-1]['assignments']}
+        tracking = tracking.loc[tracking['step'] != step]
     else:
         step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
                 'hard': trans_area['hard'], \
                 'soft': trans_area['soft'], \
                 'assignments': assignments}
-water_peak = max([step_info[x]['totals']['water'] for x in step_info.keys()])
-total_water_savings = total['step0']['water'] - new_total['water']
+water_min = min([step_info[x]['totals']['water'] for x in step_info.keys()])
+total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
 tracking = tracking.set_index('dca', drop=True)
-assignment_output = step_info[0]['assignments']
-for i in range(0, 6):
-    assignment_output["step"+str(i)] = step_info[i]['assignments']
+assignment_output = pd.DataFrame.from_dict(\
+        {"step"+str(x): step_info[x]['assignments'].iloc[:, 0].tolist() \
+        for x in range(0, 6)})
+assignment_output.index = step_info['base']['assignments'].index
 assignment_output = assignment_output.join(tracking)
 assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
         zip(assignment_output['step5'], assignment_output['mp'])]
@@ -620,23 +622,25 @@ summary['mp_name'] = summary['mp_name'].drop('None')
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
 ws = wb['MP_new']
+# write DCA/DCM assignments 
 for i in range(0, len(assignment_output), 1):
     offset = 22
     ws.cell(row=i+offset, column=7).value = assignment_output['mp'][i]
     ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
+# write habitat areas and water use
 rw = 3
 col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
-for j in step_info.keys():
+for j in ['base', 0, 1, 2, 3, 4, 5]:
     for k in col_ind.keys():
         ws.cell(row=rw, column=col_ind[k]).value = step_info[j]['totals'][k]
     rw += 1
 # write area summary tables
 ws = wb['Area Summary']
 for i in range(0, len(summary['dcm']), 1):
-    for j in range(0, max(valid_steps)+1):
+    for j in range(0, 6):
         ws.cell(row=i+5, column=j+2).value = int(summary['dcm'].iloc[i, j].round())
 for i in range(0, len(summary['mp_name']), 1):
-    for j in range(0, max(valid_steps)+1):
+    for j in range(0, 6):
         ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
 wb.save(output_excel)
 book = load_workbook(filename=output_excel)
