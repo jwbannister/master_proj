@@ -276,22 +276,25 @@ def set_constraint(axis, idx, new_constraint, constraint_df):
         constraint_df[idx] = [min(x, y) for x, y in zip(new, existing)]
     return constraint_df
 
-def get_guild_available(smart_cases):
+def get_guild_available(dca_considered):
+    possible_cases = generate_possible_changes(smart=False)
+    possible_cases = [x for x in possible_cases if x[3] != dca_considered]
     guild_available = {}
     available_hard = trans_limits['hard'] - trans_area['hard']
     for hab in guild_list:
         temp = []
-        for dca in set([x[3] for x in smart_cases[1:]]):
+        for dca in set([x[3] for x in possible_cases]):
             try:
                 temp.append(\
-                        sorted([[x[5][hab], dca_info.loc[dca]['area_sqmi']] \
-                        for x in smart_cases if x[3] == dca and \
+                        sorted([[x[6][hab], dca_info.loc[dca]['area_sqmi']] \
+                        for x in possible_cases \
+                        if x[3] == dca and \
                         dca_info.loc[dca]['area_sqmi'] < available_hard], \
                         reverse=True)[0])
             except:
                 temp.append([0, 0])
         temp = [x for x in sorted(temp, reverse=True) if x[1] < available_hard]
-        while sum([x[1] for x in temp]) > 0.8 * available_hard:
+        while sum([x[1] for x in temp]) > 0.5 * available_hard:
             temp.pop()
         guild_available[hab] = sum([x[0] for x in temp])
     return guild_available
@@ -333,9 +336,12 @@ def update_constraints(start_constraints, step_constraints):
     # all DCAs under dust control, no "None" DCMs allowed
     new = [0 for x in dca_list]
     start_constraints = set_constraint(0, 'None', new, start_constraints)
+    # do away with Till-Brine designation in new assignments
+    new = [0 for x in dca_list]
+    start_constraints = set_constraint(0, 'Till-Brine', new, start_constraints)
 
     # read in and implement Ops constraints from LAUNCHPAD
-    constraints_input = mp_file.parse(sheet_name="Constraints", header=11, \
+    constraints_input = mp_file.parse(sheet_name="Constraints Input", header=11, \
             usecols="A:N")
     constraints_input.rename(columns={'DCM Constraints': 'dca'}, inplace=True)
     constraints_input.set_index('dca', inplace=True)
@@ -355,7 +361,7 @@ def update_constraints(start_constraints, step_constraints):
             step_constraints = set_constraint(1, dca, new, step_constraints)
     return start_constraints, step_constraints
 
-def generate_smart_changes():
+def generate_possible_changes(smart=True):
     smart_cases = []
     for dca in dca_list:
         if step_constraints.loc[dca, step] != 0:
@@ -370,7 +376,9 @@ def generate_smart_changes():
                 b[dcm_ind] = 1
                 case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
                         factors, priority, dca, dca_info, waterless_dict)
-                if case_eval['smart']:
+                if smart and not case_eval['smart']:
+                    continue
+                else:
                     new_case_factors = build_single_case_factors(b, dca, factors, 'mp')
                     new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_case_factors[x] \
                             for x in guild_list}
@@ -400,9 +408,9 @@ def check_guild_violations(smart_cases, best_change):
     return filtered_cases, hab, violate_flag[hab]
 
 # set option flags
-unconstrained_case = True
+unconstrained_case = False
 freeze_farm = False
-mm_till = False
+mm_till =  False
 factor_water = True
 preset_base_water = 73351
 file_flag = ""
@@ -463,8 +471,10 @@ if mm_till:
     # remove tillage constraints as recommended by Mark Schaaf and Mica Heilmann
     mm_list = ['T10-1', 'T10-1a', 'T13-1N', 'T13-1S', 'T17-1', 'T17-2', 'T2-5', \
             'T29-2', 'T29-3', 'T29-4', 'T36-2E', 'T36-2W', 'T37-2', 'T9']
-    new = [1 if x in mm_list else 0 for x in dca_list]
-    start_constraints = set_constraint(0, 'Tillage', new, start_constraints)
+    reverse_constraint = [1 if x in mm_list else 0 for x in dca_list]
+    new = [max([x, y]) for x, y in zip(start_constraints['Tillage'].tolist(), \
+            reverse_constraint)]
+    start_constraints['Tillage'] = new
 
 # read in past DCA/DCM assignments from LAUNCHPAD
 lake_case = read_past_status()
@@ -512,7 +522,7 @@ for step in range(1, 6):
         print printout('screen')
         log_file.write(output + "\n")
         log_file.write(printout('log') + "\n")
-        smart_cases = generate_smart_changes()
+        smart_cases = generate_possible_changes(smart=True)
         retry = len(smart_cases) > 0
         while len(smart_cases) > 0:
             possible_changes = len(smart_cases)
@@ -523,7 +533,7 @@ for step in range(1, 6):
             test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             test_percent = test_total/total['base']
             other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-            guild_available = get_guild_available(other_dca_smart_cases)
+            guild_available = get_guild_available(best_change[3])
             if trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
                 smart_cases = [x for x in smart_cases if \
@@ -647,6 +657,8 @@ book = load_workbook(filename=output_excel)
 writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
+
+# record constraints used
 
 writer.save()
 
