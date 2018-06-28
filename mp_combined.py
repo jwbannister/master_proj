@@ -409,8 +409,8 @@ def check_guild_violations(smart_cases, best_change):
 
 # set option flags
 unconstrained_case = False
-freeze_farm = False
-mm_till =  False
+freeze_farm = True
+mm_till =  True
 factor_water = True
 preset_base_water = 73351
 file_flag = ""
