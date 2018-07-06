@@ -1,0 +1,216 @@
+StdPolygon,BACM_Type,AirSci Acres,BACM_Type_Detailed
+C1,Channel,133.061,Channel Area BACM
+C2,Channel,197.044,Channel Area BACM
+Corridor 1,Gravel,87.9927,Gravel
+DuckPond-L2,No DCM,10.2622,Gravel
+Phase 8,Gravel,1246.41,Gravel
+Phase 8,Gravel,34.3821,Gravel
+T10-1,99% Efficiency Wetting Basins (2008),40.7124,Sprinkler Shallow Flooding
+T10-1,99% Efficiency Wetting Basins (2003),241.966,Sprinkler Shallow Flooding
+T10-1,99% Efficiency Wetting Basins (2008),165.672,Shallow Flooding
+T10-1a,No DCM,41.074,Sprinkler Shallow Flooding
+T10-2N,99% Efficiency Wetting Basins (2008),201.041,Shallow Flooding
+T10-2S,99% Efficiency Wetting Basins (2008),698.01,Shallow Flooding
+T10-3a,No DCM,315.033,Gravel
+T10-3E,99% Efficiency Wetting Basins (2008),177.773,Shallow Flooding
+T10-3W,Brine,102.784,Brine
+T11,99% Efficiency Wetting Basins (2003),430.997,Proposed Brine
+T1-1,99% Efficiency Wetting Basins (2003),150.269,Shallow Flooding
+T12-1,Tillage With BACM Backup,215.747,Tillage With BACM Backup
+T13-1,99% Efficiency Wetting Basins (2003),378.71,Shallow Flooding
+T13-1,99% Efficiency Wetting Basins (2003),366.434,Shallow Flooding
+T13-1 Addition,99% Efficiency Wetting Basins (2003),4.83376,Shallow Flooding
+T13-1 Addition,99% Efficiency Wetting Basins (2003),4.94566,Shallow Flooding
+T13-1 Addition,99% Efficiency Wetting Basins (2003),50.1313,Shallow Flooding
+T13-1 Addition,99% Efficiency Wetting Basins (2003),9.92643,Shallow Flooding
+T13-1 Addition,99% Efficiency Wetting Basins (2003),9.89417,Shallow Flooding
+T13-2,99% Efficiency Wetting Basins (2003),388.51,Shallow Flooding
+T13-3,99% Efficiency Wetting Basins (2003),230.343,Shallow Flooding
+T13-3,99% Efficiency Wetting Basins (2003),204.86,Shallow Flooding
+T15,No DCM,76.1151,Gravel
+T16,Tillage With BACM Backup,55.8057,Tillage With BACM Backup
+T16,99% Efficiency Wetting Basins (2008),307.18,Shallow Flooding
+T16,99% Efficiency Wetting Basins (2008),150.664,Shallow Flooding
+T16,Tillage With BACM Backup,158.881,Tillage With BACM Backup
+T16,Tillage With BACM Backup,110.323,Proposed Brine
+T16,Tillage With BACM Backup,158.791,Tillage With BACM Backup
+T16,Tillage With BACM Backup,5.19742,Tillage With BACM Backup
+T16,Wetting Basins with Reduced Compliance Efficiency,36.8079,Shallow Flooding
+T16,Wetting Basins with Reduced Compliance Efficiency,78.1104,Shallow Flooding
+T17-1,99% Efficiency Wetting Basins (2008),521.047,Shallow Flooding
+T17-2,99% Efficiency Wetting Basins (2008),600.795,Shallow Flooding
+T18-0,99% Efficiency Wetting Basins (2008),341.516,Shallow Flooding
+T18N,99% Efficiency Wetting Basins (2003),544.512,Shallow Flooding
+T18N Addition,99% Efficiency Wetting Basins (2003),21.306,Shallow Flooding
+T18S,99% Efficiency Wetting Basins (2003),666.491,Shallow Flooding
+T18S,99% Efficiency Wetting Basins (2003),488.515,Proposed Brine
+T1A-1,Reduced Efficiency BACM,248.417,Sand Fence
+T1A-2,Wetting Basins with Reduced Compliance Efficiency,444.238,Shallow Flooding
+T1A-2,99% Efficiency Wetting Basins (2008),28.3938,Sprinkler Shallow Flooding
+T1A-2,99% Efficiency Wetting Basins (2008),1.19519,Shallow Flooding
+T1A-2,99% Efficiency Wetting Basins (2008),32.8515,Sprinkler Shallow Flooding
+T1A-2,Managed Vegetation,193.801,Managed Vegetation
+T1A-3,Gravel,302.543,Gravel
+T1A-3,Gravel,161.843,Gravel
+T1A-3,Gravel,41.7709,Gravel
+T1A-4,99% Efficiency Wetting Basins (2008),615.099,Sprinkler Shallow Flooding
+T20,No DCM,138.453,Gravel
+T2-1,99% Efficiency Wetting Basins (2003),332.788,Shallow Flooding
+T2-1 Addition,99% Efficiency Wetting Basins (2003),183.354,Shallow Flooding
+T21-1,No DCM,103.825,Gravel
+T21-2,No DCM,55.5791,Gravel
+T2-1b,No DCM,50.1712,Managed Vegetation
+T2-1c,No DCM,101.265,Managed Vegetation
+T21E,99% Efficiency Wetting Basins (2008),273.219,Shallow Flooding
+T21W,99% Efficiency Wetting Basins (2008),43.5593,Shallow Flooding
+T22,No DCM,366.031,Gravel
+T2-2,99% Efficiency Wetting Basins (2003),118.69,Shallow Flooding
+T2-2,Tillage With BACM Backup,14.3347,Tillage With BACM Backup
+T2-3,Tillage With BACM Backup,74.7585,Tillage With BACM Backup
+T23-5,Wetting Basins with Reduced Compliance Efficiency,193.581,Shallow Flooding
+T23NE,99% Efficiency Wetting Basins (2003),74.295,Brine
+T23NE,99% Efficiency Wetting Basins (2003),102.444,Shallow Flooding
+T23NE,99% Efficiency Wetting Basins (2003),36.0035,Brine
+T23NE,99% Efficiency Wetting Basins (2003),38.6176,Shallow Flooding
+T23NW,99% Efficiency Wetting Basins (2003),158.605,Shallow Flooding
+T23NW,99% Efficiency Wetting Basins (2003),61.5092,Shallow Flooding
+T23SE,99% Efficiency Wetting Basins (2003),475.799,Shallow Flooding
+T23SW,99% Efficiency Wetting Basins (2003),225.447,Shallow Flooding
+T24,99% Efficiency Wetting Basins (2003),1019.6,Shallow Flooding
+T24,99% Efficiency Wetting Basins (2003),80.0737,Shallow Flooding
+T2-4,Tillage With BACM Backup,92.3088,Brine
+T2-4,Tillage With BACM Backup,56.9743,Tillage With BACM Backup
+T2-4,Tillage With BACM Backup,30.9323,Tillage With BACM Backup
+T24 Addition,Tillage With BACM Backup,42.3139,Tillage With BACM Backup
+T2-5,Brine,65.2255,Brine
+T25-3,Wetting Basins with Reduced Compliance Efficiency,160.523,Shallow Flooding
+T25N,99% Efficiency Wetting Basins (2003),257.315,Shallow Flooding
+T25S,99% Efficiency Wetting Basins (2003),818.267,Shallow Flooding
+T26,99% Efficiency Wetting Basins (2003),489.274,Sprinkler Shallow Flooding
+T26,99% Efficiency Wetting Basins (2003),361.964,Shallow Flooding
+T27 Addition,Brine,50.364,Brine
+T27N,99% Efficiency Wetting Basins (2003),547.63,Shallow Flooding
+T27S,99% Efficiency Wetting Basins (2003),545.268,Shallow Flooding
+T28N,99% Efficiency Wetting Basins (2003),106.195,Sprinkler Shallow Flooding
+T28N,Gravel,29.8415,Gravel
+T28N,99% Efficiency Wetting Basins (2003),22.9087,Shallow Flooding
+T28N,Gravel,61.8416,Gravel
+T28N,99% Efficiency Wetting Basins (2003),18.8298,Sprinkler Shallow Flooding
+T28N,99% Efficiency Wetting Basins (2003),11.348,Sprinkler Shallow Flooding
+T28N,Managed Vegetation,31.6743,Managed Vegetation
+T28N,Managed Vegetation,13.2592,Managed Vegetation
+T28N,Managed Vegetation,157.343,Managed Vegetation
+T28S,99% Efficiency Wetting Basins (2003),186.256,Sprinkler Shallow Flooding
+T28S,Gravel,38.5664,Gravel
+T28S,Gravel,18.9775,Gravel
+T28S,Managed Vegetation,56.4676,Managed Vegetation
+T29-1,99% Efficiency Wetting Basins (2003),219.762,Shallow Flooding
+T29-2,99% Efficiency Wetting Basins (2003),361.52,Shallow Flooding
+T29-2,99% Efficiency Wetting Basins (2003),117.962,Sprinkler Shallow Flooding
+T29-3,99% Efficiency Wetting Basins (2003),258.065,Brine
+T29-4,Tillage With BACM Backup,126.703,Shallow Flooding
+T29-4,Tillage With BACM Backup,36.2119,Brine
+T30-1,99% Efficiency Wetting Basins (2003),225.919,Shallow Flooding
+T30-1,99% Efficiency Wetting Basins (2003),39.8144,Managed Vegetation
+T30-1,Managed Vegetation,420.721,Managed Vegetation
+T30-2,99% Efficiency Wetting Basins (2003),316.91,Shallow Flooding
+T30-3,99% Efficiency Wetting Basins (2003),172.841,Shallow Flooding
+T32-1,Managed Vegetation,74.2032,Managed Vegetation
+T32-1,Managed Vegetation,37.981,No BACM
+T32-2,No DCM,601.282,Gravel
+T35-1,Gravel,67.3092,Gravel
+T35-2,Gravel,91.2334,Gravel
+T35-3,No DCM,30.9815,Gravel
+T36-1E,99% Efficiency Wetting Basins (2003),160.672,Shallow Flooding
+T36-1E,Managed Vegetation,127.686,Managed Vegetation
+T36-1W,99% Efficiency Wetting Basins (2003),180.889,Shallow Flooding
+T36-1W,Managed Vegetation,176.318,Managed Vegetation
+T36-2E,99% Efficiency Wetting Basins (2003),273.574,Shallow Flooding
+T36-2W,99% Efficiency Wetting Basins (2003),247.526,Shallow Flooding
+T36-2W,99% Efficiency Wetting Basins (2003),142.574,Brine
+T36-3 Addition,Brine,22.7911,Brine
+T36-3E,Brine,138.883,Brine
+T36-3W,Brine,78.0933,Brine
+T37-1,Gravel,137.33,Gravel
+T37-1a,No DCM,115.625,Gravel
+T37-2,99% Efficiency Wetting Basins (2008),286.999,Sprinkler Shallow Flooding
+T37-2,No DCM,17.8872,No BACM
+T37-2,Managed Vegetation,72.8912,Managed Vegetation
+T37-2a,No DCM,116.251,Sprinkler Shallow Flooding
+T37-2b,No DCM,41.5666,Sprinkler Shallow Flooding
+T37-2c,No DCM,31.2677,Sprinkler Shallow Flooding
+T37-2d,No DCM,120.051,Sprinkler Shallow Flooding
+T3NE,Tillage With BACM Backup,108.49,Tillage With BACM Backup
+T3NE,Tillage With BACM Backup,40.6624,Proposed Brine
+T3SE,Tillage With BACM Backup,318.727,Tillage With BACM Backup
+T3SE Addition,99% Efficiency Wetting Basins (2003),77.5357,Shallow Flooding
+T3SW,Tillage With BACM Backup,386.56,Tillage With BACM Backup
+T4-3,99% Efficiency Wetting Basins (2003),149.372,Shallow Flooding
+T4-3 Addition,99% Efficiency Wetting Basins (2003),87.4159,Sprinkler Shallow Flooding
+T4-4,99% Efficiency Wetting Basins (2003),161.54,Shallow Flooding
+T4-5,99% Efficiency Wetting Basins (2003),67.2475,Shallow Flooding
+T5-1,99% Efficiency Wetting Basins (2003),83.545,Shallow Flooding
+T5-1 Addition,99% Efficiency Wetting Basins (2003),20.0505,Shallow Flooding
+T5-2,99% Efficiency Wetting Basins (2003),19.8256,Shallow Flooding
+T5-3,99% Efficiency Wetting Basins (2003),138.755,Shallow Flooding
+T5-3 Addition,99% Efficiency Wetting Basins (2003),80.697,Shallow Flooding
+T5-3B,Managed Vegetation,39.9811,Managed Vegetation
+T5-3C,Managed Vegetation,19.7181,Managed Vegetation
+T5-4,Tillage With BACM Backup,43.4153,Shallow Flooding
+T5-4B,Managed Vegetation,39.993,Managed Vegetation
+T5-4C,Managed Vegetation,39.9807,Managed Vegetation
+T5-4D,Managed Vegetation,39.982,Managed Vegetation
+T5-5A,Managed Vegetation,39.9807,Managed Vegetation
+T5-5D,Managed Vegetation,39.9839,Managed Vegetation
+T5-6A,Managed Vegetation,39.9678,Managed Vegetation
+T5-6B,Managed Vegetation,39.984,Managed Vegetation
+T5-6C,Managed Vegetation,39.9917,Managed Vegetation
+T5-6D,Managed Vegetation,39.9873,Managed Vegetation
+T5-7A,Managed Vegetation,39.9701,Managed Vegetation
+T5-7B,Managed Vegetation,39.9856,Managed Vegetation
+T5-7D,Managed Vegetation,39.9559,Managed Vegetation
+T6-4C,Managed Vegetation,39.9764,Managed Vegetation
+T6-4D,Managed Vegetation,39.9892,Managed Vegetation
+T6-5A,Managed Vegetation,39.9831,Managed Vegetation
+T6-5B,Managed Vegetation,39.9668,Managed Vegetation
+T6-5C,Managed Vegetation,39.9841,Managed Vegetation
+T6-5D,Managed Vegetation,39.9871,Managed Vegetation
+T6-6A,Managed Vegetation,39.9709,Managed Vegetation
+T6-6B,Managed Vegetation,39.9652,Managed Vegetation
+T6-6C,Managed Vegetation,39.9842,Managed Vegetation
+T6-6D,Managed Vegetation,39.9904,Managed Vegetation
+T6-7A,Managed Vegetation,39.9742,Managed Vegetation
+T6-7B,Managed Vegetation,39.9654,Managed Vegetation
+T6-7C,Managed Vegetation,39.9628,Managed Vegetation
+T6-7D,Managed Vegetation,39.968,Managed Vegetation
+T7-4A,Managed Vegetation,40.0005,Managed Vegetation
+T7-4C,Managed Vegetation,39.9779,Managed Vegetation
+T7-4D,Managed Vegetation,39.9961,Managed Vegetation
+T7-5A,Managed Vegetation,39.9971,Managed Vegetation
+T7-5B,Managed Vegetation,39.9791,Managed Vegetation
+T7-5C,Managed Vegetation,39.9809,Managed Vegetation
+T7-5D,Managed Vegetation,39.9994,Managed Vegetation
+T7-6A,Managed Vegetation,39.9823,Managed Vegetation
+T7-6B,Managed Vegetation,39.9643,Managed Vegetation
+T7-6C,Managed Vegetation,39.9784,Managed Vegetation
+T7-6D,Managed Vegetation,39.9962,Managed Vegetation
+T7-7A,Managed Vegetation,39.9828,Managed Vegetation
+T7-7B,Managed Vegetation,39.9613,Managed Vegetation
+T7-7C,Managed Vegetation,39.9451,Managed Vegetation
+T7-7D,Managed Vegetation,39.9602,Managed Vegetation
+T8-3A,Managed Vegetation,39.9639,Managed Vegetation
+T8-3B,Managed Vegetation,39.6682,Managed Vegetation
+T8-4A,Managed Vegetation,39.9618,Managed Vegetation
+T8-4B,Managed Vegetation,39.9667,Managed Vegetation
+T8-4C,Managed Vegetation,39.9817,Managed Vegetation
+T8-4D,Managed Vegetation,40.3839,Managed Vegetation
+T8-5A,Managed Vegetation,39.737,Managed Vegetation
+T8-5B,Managed Vegetation,39.9765,Managed Vegetation
+T8-5C,Managed Vegetation,39.9756,Managed Vegetation
+T8-5D,Managed Vegetation,39.9993,Managed Vegetation
+T8-6A,Managed Vegetation,39.9845,Managed Vegetation
+T8-6B,Managed Vegetation,39.9611,Managed Vegetation
+T8-6C,Managed Vegetation,41.5475,Managed Vegetation
+T8-6D,Managed Vegetation,43.0183,Managed Vegetation
+T8W,Brine,124.575,Brine
+T9,99% Efficiency Wetting Basins (2003),292.519,Shallow Flooding

@@ -611,23 +611,22 @@ dcm_order = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
 dcm_order.append('total')
 hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
 summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
-summary_melt = pd.melt(summary_df, id_vars=['area_ac'], \
+summary_melt = pd.melt(summary_df, id_vars=['area_sqmi'], \
         value_vars=['step'+str(i) for i in range(0, 6)], \
         var_name='step', value_name='mp_name')
 summary_melt['dcm'] = summary_melt['mp_name']
 summary_melt['dcm'].replace(hab_dict, inplace=True)
 summary = {'mp_name': [], 'dcm': []}
 for nm in summary.keys():
-    summary[nm] = summary_melt.groupby([nm, 'step'])['area_ac'].agg('sum').unstack()
+    summary[nm] = summary_melt.groupby([nm, 'step'])['area_sqmi'].agg('sum').unstack()
     tot = summary[nm].sum().rename('total')
     summary[nm] = summary[nm].append(tot)
     summary[nm].fillna(0, inplace=True)
-summary['dcm'] = summary['dcm'].reindex(dcm_order).copy().drop('None')
 hab2dcm.set_index('mp_name', inplace=True)
 summary['mp_name'] = summary['mp_name'].join(hab2dcm, how='right')
 summary['mp_name'].drop(['desc', 'hab_id', 'dust_dcm'], axis=1, inplace=True)
 summary['mp_name'].fillna(0, inplace=True)
-summary['mp_name'] = summary['mp_name'].drop('None')
+summary['mp_name'].drop('None', inplace=True)
 
 # write results into output workbook
 wb = load_workbook(filename = file_path + file_name)
@@ -647,11 +646,13 @@ for j in ['base', 0, 1, 2, 3, 4, 5]:
 # write area summary tables
 ws = wb['Area Summary']
 for i in range(0, len(summary['dcm']), 1):
+    ws.cell(row=i+5, column=1).value = summary['dcm'].index.tolist()[i]
     for j in range(0, 6):
-        ws.cell(row=i+5, column=j+2).value = int(summary['dcm'].iloc[i, j].round())
+        ws.cell(row=i+5, column=j+2).value = summary['dcm'].iloc[i, j].round(3)
 for i in range(0, len(summary['mp_name']), 1):
+    ws.cell(row=i+5, column=9).value = summary['mp_name'].index.tolist()[i]
     for j in range(0, 6):
-        ws.cell(row=i+5, column=j+10).value = int(summary['mp_name'].iloc[i, j].round())
+        ws.cell(row=i+5, column=j+10).value = summary['mp_name'].iloc[i, j].round(3)
 wb.save(output_excel)
 book = load_workbook(filename=output_excel)
 writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
