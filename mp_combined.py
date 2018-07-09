@@ -361,7 +361,7 @@ def update_constraints(start_constraints, step_constraints):
             step_constraints = set_constraint(1, dca, new, step_constraints)
     return start_constraints, step_constraints
 
-def generate_possible_changes(smart=True):
+def generate_possible_changes(smart_only=True):
     smart_cases = []
     for dca in dca_list:
         if step_constraints.loc[dca, step] != 0:
@@ -376,7 +376,7 @@ def generate_possible_changes(smart=True):
                 b[dcm_ind] = 1
                 case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
                         factors, priority, dca, dca_info, waterless_dict)
-                if smart and not case_eval['smart']:
+                if smart_only and not case_eval['smart']:
                     continue
                 else:
                     new_case_factors = build_single_case_factors(b, dca, factors, 'mp')
@@ -421,7 +421,7 @@ if mm_till: file_flag = file_flag + " MM_TILL"
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP LAUNCHPAD.xlsx"
+file_name = "MP LAUNCHPAD SPLIT DCAS.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
 output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
