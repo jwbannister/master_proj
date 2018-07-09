@@ -276,8 +276,8 @@ def set_constraint(axis, idx, new_constraint, constraint_df):
         constraint_df[idx] = [min(x, y) for x, y in zip(new, existing)]
     return constraint_df
 
-def get_guild_available(dca_considered):
-    possible_cases = generate_possible_changes(smart=False)
+def get_guild_available(dca_considered, approach_factor=0.9):
+    possible_cases = generate_possible_changes(smart_only=False)
     possible_cases = [x for x in possible_cases if x[3] != dca_considered]
     guild_available = {}
     available_hard = trans_limits['hard'] - trans_area['hard']
@@ -294,9 +294,11 @@ def get_guild_available(dca_considered):
             except:
                 temp.append([0, 0])
         temp = [x for x in sorted(temp, reverse=True) if x[1] < available_hard]
-        while sum([x[1] for x in temp]) > 0.5 * available_hard:
-            temp.pop()
-        guild_available[hab] = sum([x[0] for x in temp])
+        temp = [x for x in temp if x[0] > 0]
+        temp1 = sorted([[x[0]/x[1], x[0], x[1]] for x in temp], reverse=True)
+        while sum([x[2] for x in temp1]) > approach_factor * available_hard:
+            temp1.pop()
+        guild_available[hab] = sum([x[1] for x in temp1])
     return guild_available
 
 def initialize_constraints():
@@ -522,7 +524,7 @@ for step in range(1, 6):
         print printout('screen')
         log_file.write(output + "\n")
         log_file.write(printout('log') + "\n")
-        smart_cases = generate_possible_changes(smart=True)
+        smart_cases = generate_possible_changes(smart_only=True)
         retry = len(smart_cases) > 0
         while len(smart_cases) > 0:
             possible_changes = len(smart_cases)
@@ -533,7 +535,7 @@ for step in range(1, 6):
             test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             test_percent = test_total/total['base']
             other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-            guild_available = get_guild_available(best_change[3])
+            guild_available = get_guild_available(best_change[3], approach_factor=0.9)
             if trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
                 smart_cases = [x for x in smart_cases if \
@@ -622,6 +624,7 @@ for nm in summary.keys():
     tot = summary[nm].sum().rename('total')
     summary[nm] = summary[nm].append(tot)
     summary[nm].fillna(0, inplace=True)
+    summary[nm].drop('None', inplace=True)
 hab2dcm.set_index('mp_name', inplace=True)
 summary['mp_name'] = summary['mp_name'].join(hab2dcm, how='right')
 summary['mp_name'].drop(['desc', 'hab_id', 'dust_dcm'], axis=1, inplace=True)
