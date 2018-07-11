@@ -276,11 +276,16 @@ def set_constraint(axis, idx, new_constraint, constraint_df):
         constraint_df[idx] = [min(x, y) for x, y in zip(new, existing)]
     return constraint_df
 
-def get_guild_available(dca_considered, approach_factor=0.9):
+def get_guild_available(best_change, approach_factor=0.9):
+    dca_considered = best_change[3]
+    if best_change[4] == 'hard':
+        new_hard = dca_info.loc[best_change[3]]['area_sqmi']
+    else:
+        new_hard = 0
     possible_cases = generate_possible_changes(smart_only=False)
     possible_cases = [x for x in possible_cases if x[3] != dca_considered]
     guild_available = {}
-    available_hard = trans_limits['hard'] - trans_area['hard']
+    available_hard = trans_limits['hard'] - trans_area['hard'] - new_hard
     for hab in guild_list:
         temp = []
         for dca in set([x[3] for x in possible_cases]):
@@ -412,7 +417,7 @@ def check_guild_violations(smart_cases, best_change):
 # set option flags
 unconstrained_case = False
 freeze_farm = False
-mm_till =  False
+mm_till =  True
 factor_water = True
 preset_base_water = 73351
 file_flag = ""
@@ -535,7 +540,6 @@ for step in range(1, 6):
             test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             test_percent = test_total/total['base']
             other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-            guild_available = get_guild_available(best_change[3], approach_factor=0.9)
             if trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
                 smart_cases = [x for x in smart_cases if \
@@ -549,6 +553,7 @@ for step in range(1, 6):
                 log_file.write(output + "\n")
                 retry = len(smart_cases) > 0
                 continue
+            guild_available = get_guild_available(best_change, approach_factor=0.9)
             smart_cases, hab, violation = check_guild_violations(smart_cases, best_change)
             if len(smart_cases) < possible_changes:
                 output = "eliminating " + \
