@@ -251,7 +251,8 @@ def printout(flag):
                 priority[2]
     return readout
 
-def check_exceed_area(test_totals, new_totals, limits, guild_available):
+def check_exceed_area(test_totals, new_totals, limits, guild_available, \
+        meadow_limits=True):
     exceed_flag = {x: 'ok' for x in guild_list if x != 'water'}
     for x in exceed_flag.keys():
         if (test_totals[x] + (guild_available[x] * 640)) / total['base'][x] < limits[x]:
@@ -259,7 +260,7 @@ def check_exceed_area(test_totals, new_totals, limits, guild_available):
     # meadow is hard to establish, do not want to reduce only to have to
     # re-establish. Prevent meadow from dipping below target value and never
     # add any more meadow
-    if not unconstrained_case:
+    if not unconstrained_case and meadow_limits:
         if test_totals['md'] / total['base']['md'] < limits['md']:
             exceed_flag['md'] = 'under'
         if test_totals['md'] > new_totals['md'] :
@@ -402,8 +403,9 @@ def generate_possible_changes(smart_only=True):
             reverse=True)
     return smart_cases
 
-def check_guild_violations(smart_cases, best_change):
-    violate_flag = check_exceed_area(test_total, new_total, hab_limits, guild_available)
+def check_guild_violations(smart_cases, best_change, meadow_limits=True):
+    violate_flag = check_exceed_area(test_total, new_total, hab_limits, \
+            guild_available, meadow_limits=meadow_limits)
     violations = [x for x in guild_list \
             if (violate_flag[x] == 'under' and best_change[6][x] < 0) \
             or (violate_flag[x] == 'over' and best_change[6][x] > 0)]
@@ -554,7 +556,8 @@ for step in range(1, 6):
                 retry = len(smart_cases) > 0
                 continue
             guild_available = get_guild_available(best_change, approach_factor=0.9)
-            smart_cases, hab, violation = check_guild_violations(smart_cases, best_change)
+            smart_cases, hab, violation = \
+                    check_guild_violations(smart_cases, best_change)
             if len(smart_cases) < possible_changes:
                 output = "eliminating " + \
                         str(possible_changes - len(smart_cases)) + " of " + \
