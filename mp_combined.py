@@ -97,11 +97,11 @@ def read_dca_info():
 def read_past_status():
     lake_case = {'base': [], 'step0': []}
     for case in lake_case.keys():
-        assignments = [np.array(factors['dcm'].index.get_level_values('dcm')) \
+        assigns = [np.array(factors['dcm'].index.get_level_values('dcm')) \
                 == dca_info[case][x] for x in range(0, len(dca_info))]
-        assignments = [assignments[x].astype(int).tolist() \
-                for x in range(0, len(assignments))]
-        case_df = pd.DataFrame(assignments)
+        assigns = [assigns[x].astype(int).tolist() \
+                for x in range(0, len(assigns))]
+        case_df = pd.DataFrame(assigns)
         case_df.index = dca_info.index
         case_df.columns = factors['dcm'].index.tolist()
         lake_case[case] = case_df
@@ -178,8 +178,14 @@ def build_custom_steps(step, step_list, data):
     factors.drop('step', axis=1, inplace=True)
     return factors
 
+def try_get_dcm(row):
+    try:
+        return dcm_list[row.tolist().index(1)]
+    except:
+        return dca_info.loc[row.name, 'step0']
+
 def get_assignments(case, dca_list, dcm_list):
-    assignments = pd.DataFrame([dcm_list[row.tolist().index(1)] \
+    assignments = pd.DataFrame([try_get_dcm(row) \
             for index, row in case.iterrows()], index=dca_list, columns=['dcm'])
     return assignments
 
@@ -188,7 +194,10 @@ def build_case_factors(lake_case, custom_factors, stp):
     for idx in range(0, len(lake_case)):
         dca_name = lake_case.iloc[idx].name
         dca_case = lake_case.iloc[idx]
-        dcm_name = dca_info.loc[dca_name, stp]
+        try:
+            dcm_name = dcm_list[dca_case.tolist().index(1)]
+        except:
+            dcm_name = dca_info.loc[dca_name, 'step0']
         dca_idx = [x for x, y in \
                 enumerate(custom_factors[stp].index.get_level_values('dca')) \
                 if y==dca_name]
@@ -503,23 +512,14 @@ for case in lake_case.keys():
 # initialize variables before loop
 constraints = start_constraints.copy()
 case = lake_case['step0'].copy()
-assignments = get_assignments(case, dca_list, dcm_list)
-assignments.columns = ["step0"]
 case_factors = build_case_factors(case, factors, 'mp')
 new_percent = total['step0']/total['base']
 new_total = total['step0'].copy()
 priority = prioritize(new_percent, hab_limits)
 
-step_info = {}
-step_info['base'] = {'totals': total['base'],
-        'percent_base': total['base']/total['base'], \
-        'hard_transition': 0, 'soft_transition': 0, \
-        'assignments': get_assignments(lake_case['base'], dca_list, dcm_list)}
-step_info[0] = {'totals': new_total, 'percent_base': new_percent, \
-        'hard_transition': 0, 'soft_transition': 0, \
-        'assignments': assignments}
-
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
+assignments = {'base': get_assignments(lake_case['base'], dca_list, dcm_list), \
+        'step0': get_assignments(lake_case['base'], dca_list, dcm_list)}
 
 change_counter = 0
 for step in range(1, 6):
@@ -576,8 +576,7 @@ for step in range(1, 6):
             prior_dcm = case.columns.tolist()[prior_assignment.index(1)]
             case.loc[best_change[3]] = np.array(best_change[2])
             constraints.loc[best_change[3]] = np.array(best_change[2])
-            assignments = get_assignments(case, dca_list, dcm_list)
-            assignments.columns = ["step"+str(step)]
+            assignments["step" + str(step)] = get_assignments(case, dca_list, dcm_list)
             new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             new_percent = new_total/total['base']
             priority = prioritize(new_percent, hab_limits)
@@ -587,28 +586,18 @@ for step in range(1, 6):
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
             break
-    if new_total['water'] > step_info[step-1]['totals']['water']:
-        step_info[step] = {'totals': step_info[step-1]['totals'], \
-                'percent_base': step_info[step-1]['percent_base'], \
-                'hard': 0, \
-                'soft': 0, \
-                'assignments': step_info[step-1]['assignments']}
+    if new_total['water'] > total["step" + str(step-1)]['water']:
         tracking = tracking.loc[tracking['step'] != step]
-    else:
-        step_info[step] = {'totals': new_total, 'percent_base': new_percent, \
-                'hard': trans_area['hard'], \
-                'soft': trans_area['soft'], \
-                'assignments': assignments}
-water_min = min([step_info[x]['totals']['water'] for x in step_info.keys()])
+water_min = min([total[x]['water'] for x in total.keys()])
 total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
 tracking = tracking.set_index('dca', drop=True)
 assignment_output = pd.DataFrame.from_dict(\
-        {"step"+str(x): step_info[x]['assignments'].iloc[:, 0].tolist() \
+        {"step"+str(x): assignments["step" + str(x)].iloc[:, 0].tolist() \
         for x in range(0, 6)})
-assignment_output.index = step_info['base']['assignments'].index
+assignment_output.index = assignments['base'].index
 assignment_output = assignment_output.join(tracking)
 assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
         zip(assignment_output['step5'], assignment_output['mp'])]
@@ -653,9 +642,9 @@ for i in range(0, len(assignment_output), 1):
 # write habitat areas and water use
 rw = 3
 col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
-for j in ['base', 0, 1, 2, 3, 4, 5]:
+for j in ['base', 'step0', 'step1', 'step2', 'step3', 'step4', 'step5']:
     for k in col_ind.keys():
-        ws.cell(row=rw, column=col_ind[k]).value = step_info[j]['totals'][k]
+        ws.cell(row=rw, column=col_ind[k]).value = totals[j][k]
     rw += 1
 # write area summary tables
 ws = wb['Area Summary']
