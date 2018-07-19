@@ -69,12 +69,12 @@ def patch_worksheet():
 patch_worksheet()
 
 def build_factor_tables():
-    dcm_factors = mp_file.parse(sheet_name="Generic HV & WD", header=2, \
+    dcm_factors = mp_file.parse(sheet_name="Design HV & WD", header=2, \
             usecols="A,C,D,E,F,G,H", \
             names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
     dcm_factors.set_index('dcm', inplace=True)
     # build up custom habitat and water factor tables
-    custom_info = mp_file.parse(sheet_name="Custom HV & WD", header=0, \
+    custom_info = mp_file.parse(sheet_name="As-Built HV & WD", header=0, \
             usecols="A,B,C,D,E,F,G,H,I", \
             names=["dca", "dcm", "step", "bw", "mw", "pl", "ms", "md", "water"])
     custom_info.set_index(['dca', 'dcm'], inplace=True)
@@ -160,9 +160,10 @@ def prioritize(value_percents, hab_minimums):
         return {1: 'water', 2: value_percents[0:5].idxmin()}
 
 def backfill(row, backfill_data, columns_list):
-    for col in columns_list:
-        if np.isnan(row[col]):
-            row[col] = backfill_data.loc[row.name[1], col]
+    if any(row.isnull()):
+        for col in columns_list:
+            if np.isnan(row[col]):
+                row[col] = backfill_data.loc[row.name[1], col]
     return row
 
 def build_custom_steps(step, step_list, data):
@@ -187,7 +188,7 @@ def build_case_factors(lake_case, custom_factors, stp):
     for idx in range(0, len(lake_case)):
         dca_name = lake_case.iloc[idx].name
         dca_case = lake_case.iloc[idx]
-        dcm_name = dca_case[dca_case==1].index[0]
+        dcm_name = dca_info.loc[dca_name, stp]
         dca_idx = [x for x, y in \
                 enumerate(custom_factors[stp].index.get_level_values('dca')) \
                 if y==dca_name]
@@ -331,10 +332,11 @@ def update_constraints(start_constraints, step_constraints):
     # no additional sand fences besides existing T1A1
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
     start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
-    # DCAs currently designated as HDCM to remain unchanged
-    current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
-    for dca in current_hab.index:
-        new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
+    # DCAs currently assigned specific habitat values from field observations
+    # should remain unchanged
+    unique_dcms = dca_info.loc[['Unique' in x for x in dca_info['step0']]]
+    for dca in unique_dcms.index:
+        new = [1 if x == unique_dcms.loc[dca]['step0'] else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
     waterless = dca_info.loc[[x in waterless_dict.keys() for x in dca_info['step0']]]
@@ -430,13 +432,15 @@ if mm_till: file_flag = file_flag + " MM_TILL"
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP LAUNCHPAD SPLIT DCAS.xlsx"
+file_name = "MP LAUNCHPAD.xlsx"
 mp_file = pd.ExcelFile(file_path + file_name)
 timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
 output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
 output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
 output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
 log_file = open(output_log, 'a')
+# read in current state of workbook for future writing
+wb = load_workbook(filename = file_path + file_name)
 
 factors = build_factor_tables()
 dca_info = read_dca_info()
@@ -640,7 +644,6 @@ summary['mp_name'].fillna(0, inplace=True)
 summary['mp_name'].drop('None', inplace=True)
 
 # write results into output workbook
-wb = load_workbook(filename = file_path + file_name)
 ws = wb['MP_new']
 # write DCA/DCM assignments 
 for i in range(0, len(assignment_output), 1):
