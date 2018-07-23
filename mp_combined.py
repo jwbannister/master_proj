@@ -586,6 +586,7 @@ for step in range(1, 6):
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
             break
+    total["step" + str(step)] = new_total
     if new_total['water'] > total["step" + str(step-1)]['water']:
         tracking = tracking.loc[tracking['step'] != step]
 water_min = min([total[x]['water'] for x in total.keys()])
