@@ -432,12 +432,14 @@ unconstrained_case = False
 freeze_farm = False
 mm_till =  True
 factor_water = True
+design_only = True
 preset_base_water = 73351
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
 if factor_water: file_flag = file_flag + " H20_ADJUST"
 if mm_till: file_flag = file_flag + " MM_TILL"
+if design_only: file_flag = file_flag + " DESIGN_HAB_ONLY"
 
 # read data from original Master Project planning workbook
 file_path = os.path.realpath(os.getcwd()) + "/"
@@ -482,6 +484,13 @@ start_constraints, step_constraints = initialize_constraints()
 if not unconstrained_case:
     start_constraints, step_constraints = \
             update_constraints(start_constraints, step_constraints)
+
+# only allow changes to waterless or design habitat DCMs
+if design_only:
+    allowed_list = hdcm_list + waterless_dict.keys()
+    for dca in dca_info.index:
+        new = [1 if x in allowed_list else 0 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
 
 if freeze_farm:
     farm_dcas = dca_info.loc[[x == 'Veg 08' for x in dca_info['step0']]]
