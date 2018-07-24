@@ -103,7 +103,7 @@ def define_soft():
     soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
             usecols="A").iloc[:, 0].tolist()[4:11]
     soft_dcms = [x for x in soft_dcm_input if x in dcm_list]
-    soft_idx = [x for x, y in enumerate(factors['design'].index.tolist()) if y in soft_dcms]
+    soft_idx = [x for x, y in enumerate(dcm_list) if y in soft_dcms]
     return soft_idx
 
 def get_area(dca_case, dca_name, custom_factors, dca_info, hab):
@@ -115,15 +115,15 @@ def get_area(dca_case, dca_name, custom_factors, dca_info, hab):
     area = case_factors * dca_info.loc[dca_name]['area_sqmi']
     return area[hab]
 
-def evaluate_dca_change(dca_case, previous_case, previous_factors, custom_factors, \
+def evaluate_dca_change(dca_case, previous_case, previous_factors, factors, \
         priority, dca_name, dca_info, waterless_preferences):
     previous_case_factors = previous_factors.loc[previous_case.name]
-    dcm_name = custom_factors['design'].index.tolist()[dca_case.index(1)]
+    dcm_name = dcm_list[dca_case.index(1)]
     if (dca_name, dcm_name) in [(x, y) for x, y in \
-            custom_factors['asbuilt'].index.tolist()]:
-       case_factors = custom_factors['asbuilt'].loc[dca_name, dcm_name]
+            factors['asbuilt'].index.tolist()]:
+       case_factors = factors['asbuilt'].loc[dca_name, dcm_name]
     else:
-       case_factors = custom_factors['design'].iloc[dca_case.index(1)]
+       case_factors = factors['design'].loc[dcm_name]
     if priority[1]=='water':
         smart = case_factors['water'] - previous_case_factors['water'] < 0
         benefit1 = previous_case_factors['water'] - case_factors['water']
@@ -175,7 +175,7 @@ def get_assignments(case, dca_list, dcm_list):
             for index, row in case.iterrows()], index=dca_list, columns=['dcm'])
     return assignments
 
-def build_case_factors(lake_case, factors):
+def build_case_factors(lake_case, factors, base_case=False):
     case_factors = pd.DataFrame()
     for idx in range(0, len(lake_case)):
         dca_name = lake_case.iloc[idx].name
@@ -193,6 +193,8 @@ def build_case_factors(lake_case, factors):
             if np.isnan(tmp[i]):
                 tmp[i] = factors['design'].loc[dcm_name][i]
         tmp['dca'] = dca_name
+        if base_case:
+            tmp['water'] = factors['design'].loc[dcm_name]['water']
         case_factors = case_factors.append(tmp, ignore_index=True)
     case_factors.set_index('dca', inplace=True)
     return case_factors
@@ -206,9 +208,9 @@ def build_single_case_factors(dca_case, dca_name, factors):
         single_case_factors = factors['design'].loc[dcm_name]
     return single_case_factors
 
-def calc_totals(case, factors, dca_info):
+def calc_totals(case, factors, dca_info, base_case=False):
     dca_list = dca_info.index.tolist()
-    case_factors = build_case_factors(case, factors)
+    case_factors = build_case_factors(case, factors, base_case)
     return case_factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
 def printout(flag):
@@ -414,8 +416,8 @@ freeze_farm = True
 mm_till =  True
 factor_water = True
 design_only = True
-truncate_steps = True
-force_thru = 0
+truncate_steps = False
+force_thru = 2
 preset_base_water = 73351
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
@@ -483,7 +485,8 @@ if not unconstrained_case:
 if design_only:
     allowed_list = hdcm_list + waterless_dict.keys()
     for dca in dca_info.index:
-        new = [1 if x in allowed_list else 0 for x in dcm_list]
+        allowed = allowed_list + [dca_info.loc[dca]['step0']]
+        new = [1 if x in allowed else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
 
 if freeze_farm:
@@ -513,6 +516,8 @@ if force_thru > 0:
         dca_info["step" + str(i)] = dca_info["step" + str(i-1)]
         for j in step_force.index:
             dca_info.loc[j, "step" + str(i)] = step_force.loc[j, 'force']
+            new = [0] * 5
+            step_constraints = set_constraint(1, j, new, step_constraints)
     forced_steps = ["step" + str(x) for x in range(1, force_thru+1)]
 else:
     forced_steps = []
@@ -520,22 +525,25 @@ else:
 lake_case = {x:read_past_status(x) for x in ['base', 'step0'] + forced_steps}
 if factor_water:
     calc_base_water = calc_totals(lake_case['base'], factors, \
-            dca_info).loc['water']
+            dca_info, base_case=True).loc['water']
     water_adjust = preset_base_water/calc_base_water
     for j in factors.keys():
         factors[j]['water'] = factors[j]['water'] * water_adjust
 total = {}
 assignments = {}
 for step in lake_case.keys():
-    total[step] = calc_totals(lake_case[step], factors, dca_info)
+    if step=='base':
+        total[step] = calc_totals(lake_case[step], factors, dca_info, base_case=True)
+    else:
+        total[step] = calc_totals(lake_case[step], factors, dca_info)
     assignments[step] = get_assignments(lake_case[step], dca_list, dcm_list)
 
 # initialize variables before loop
 constraints = start_constraints.copy()
-case = lake_case['step0'].copy()
+case = lake_case["step" + str(force_thru)].copy()
 case_factors = build_case_factors(case, factors)
-new_percent = total['step0']/total['base']
-new_total = total['step0'].copy()
+new_percent = total["step" + str(force_thru)]/total['base']
+new_total = total["step" + str(force_thru)].copy()
 priority = prioritize(new_percent, hab_limits)
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
@@ -603,13 +611,13 @@ for step in range(force_thru+1, 6):
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
             break
-    if new_total['water'] < total["step" + str(step-1)]['water'] and truncate_steps:
-        assignments["step" + str(step)] = get_assignments(case, dca_list, dcm_list)
-        total["step" + str(step)] = new_total
-    else:
+    if new_total['water'] > total["step" + str(step-1)]['water'] and truncate_steps:
         assignments["step" + str(step)] = assignments["step" + str(step-1)]
         total["step" + str(step)] = total["step" + str(step-1)]
         tracking = tracking.loc[tracking['step'] != step]
+    else:
+        assignments["step" + str(step)] = get_assignments(case, dca_list, dcm_list)
+        total["step" + str(step)] = new_total
 water_min = min([total[x]['water'] for x in total.keys()])
 total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
@@ -625,6 +633,8 @@ assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
         zip(assignment_output['step5'], assignment_output['mp'])]
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
+for dca in forces.index:
+    assignment_output.loc[dca, 'step'] = forces.loc[dca]['step']
 assignment_output.to_csv(output_csv)
 
 summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
