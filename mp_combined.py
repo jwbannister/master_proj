@@ -330,6 +330,10 @@ def update_constraints(start_constraints, step_constraints):
     for dca in unique_dcms.index:
         new = [1 if x == unique_dcms.loc[dca]['step0'] else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
+    current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
+    for dca in current_hab.index:
+        new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
     waterless = dca_info.loc[[x in waterless_dict.keys() for x in dca_info['step0']]]
     for dca in waterless.index:
@@ -416,7 +420,7 @@ freeze_farm = True
 mm_till =  True
 factor_water = True
 design_only = True
-truncate_steps = False
+truncate_steps = True
 force_thru = 0
 preset_base_water = 73351
 file_flag = ""
@@ -443,9 +447,6 @@ hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
         usecols="I,J,K,L").dropna(how='any')
 hab2dcm = hab2dcm.append({'mp_name':'total', 'desc':'x', 'hab_id':'x', 'dust_dcm':'x'},
         ignore_index=True)
-#dcm_order = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
-#        usecols="E")[:11]['dust_dcm'].tolist()
-#dcm_order.append('total')
 hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
 
 factors = build_factor_tables()
