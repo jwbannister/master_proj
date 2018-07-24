@@ -417,7 +417,7 @@ mm_till =  True
 factor_water = True
 design_only = True
 truncate_steps = False
-force_thru = 2
+force_thru = 0
 preset_base_water = 73351
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
@@ -633,8 +633,9 @@ assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
         zip(assignment_output['step5'], assignment_output['mp'])]
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
-for dca in forces.index:
-    assignment_output.loc[dca, 'step'] = forces.loc[dca]['step']
+if force_thru > 0:
+    for dca in forces.index:
+        assignment_output.loc[dca, 'step'] = forces.loc[dca]['step']
 assignment_output.to_csv(output_csv)
 
 summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
