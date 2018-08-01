@@ -335,7 +335,8 @@ def update_constraints(start_constraints, step_constraints):
         new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
-    waterless = dca_info.loc[[x in waterless_dict.keys() for x in dca_info['step0']]]
+    waterless = dca_info.loc[[x in waterless_dict.keys() + ['Brine (DWM)'] \
+            for x in dca_info['step0']]]
     for dca in waterless.index:
         new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
@@ -348,23 +349,28 @@ def update_constraints(start_constraints, step_constraints):
 
     # read in and implement Ops constraints from LAUNCHPAD
     constraints_input = mp_file.parse(sheet_name="Constraints Input", header=11, \
-            usecols="A:AE")
-    constraints_input.rename(columns={'DCM Constraints': 'dca'}, inplace=True)
+            usecols="A:J")
     constraints_input.set_index('dca', inplace=True)
     step_start = ['Step' in str(x) for \
             x in constraints_input.index.tolist()].index(True)
     dcm_constraint_input = constraints_input.iloc[:step_start, :].dropna(how='all')
     step_constraint_input = constraints_input.iloc[step_start+1:, :].dropna(how='all')
     for dca in dcm_constraint_input.index:
-        not_allowed = dcm_constraint_input.loc[dca].dropna().tolist()
-        for dcm in not_allowed:
-            new = [0 if x == dcm else 1 for x in dcm_list]
-            start_constraints = set_constraint(1, dca, new, start_constraints)
+        if dcm_constraint_input.loc[dca, 'type']=='not':
+            not_allowed = dcm_constraint_input.loc[dca].dropna().tolist()[1:]
+            new = [0 if x in not_allowed else 1 for x in dcm_list]
+        else:
+            allowed = dcm_constraint_input.loc[dca].dropna().tolist()[1:]
+            new = [1 if x in allowed else 0 for x in dcm_list]
+        start_constraints = set_constraint(1, dca, new, start_constraints)
     for dca in step_constraint_input.index:
-        not_allowed = step_constraint_input.loc[dca].dropna().tolist()
-        for step in not_allowed:
-            new = [0 if x == step else 1 for x in range(1, 6)]
-            step_constraints = set_constraint(1, dca, new, step_constraints)
+        if step_constraint_input.loc[dca, 'type']=='not':
+            not_allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
+            new = [0 if x in not_allowed else 1 for x in range(1, 6)]
+        else:
+            allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
+            new = [1 if x in allowed else 0 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints)
     return start_constraints, step_constraints
 
 def generate_possible_changes(smart_only=True):
