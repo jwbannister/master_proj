@@ -348,7 +348,7 @@ def update_constraints(start_constraints, step_constraints):
 
     # read in and implement Ops constraints from LAUNCHPAD
     constraints_input = mp_file.parse(sheet_name="Constraints Input", header=11, \
-            usecols="A:N")
+            usecols="A:AE")
     constraints_input.rename(columns={'DCM Constraints': 'dca'}, inplace=True)
     constraints_input.set_index('dca', inplace=True)
     step_start = ['Step' in str(x) for \
