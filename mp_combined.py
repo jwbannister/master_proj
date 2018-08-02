@@ -618,7 +618,8 @@ for step in range(force_thru+1, 6):
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
             break
-    if new_total['water'] > total["step" + str(step-1)]['water'] and truncate_steps:
+    if  total["step" + str(step-1)]['water'] - new_total['water'] < 10 \
+            and truncate_steps:
         assignments["step" + str(step)] = assignments["step" + str(step-1)]
         total["step" + str(step)] = total["step" + str(step-1)]
         tracking = tracking.loc[tracking['step'] != step]
