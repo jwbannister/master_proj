@@ -335,7 +335,8 @@ def update_constraints(start_constraints, step_constraints):
         new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
-    waterless = dca_info.loc[[x in waterless_dict.keys() + ['Brine (DWM)'] \
+    waterless = dca_info.loc[[x in waterless_dict.keys() + \
+            ['Brine (DWM)', 'Sand Fences'] \
             for x in dca_info['step0']]]
     for dca in waterless.index:
         new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
