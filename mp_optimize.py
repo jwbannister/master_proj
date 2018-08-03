@@ -405,13 +405,13 @@ def generate_possible_changes(smart_only=True):
                 else:
                     new_case_factors = build_single_case_factors(b, dca, factors)
                     new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_case_factors[x] \
-                            for x in guild_list}
+                            for x in guild_list + ['water']}
                     old_case_factors = build_single_case_factors(case.loc[dca].tolist(), \
                             dca, factors)
                     old_areas = {x: dca_info.loc[dca]['area_sqmi'] * old_case_factors[x] \
-                            for x in guild_list}
+                            for x in guild_list + ['water']}
                     guild_changes = {x: new_areas[x] - old_areas[x] \
-                            for x in guild_list}
+                            for x in guild_list + ['water']}
                     change = (case_eval['benefit1'], case_eval['benefit2'], b, \
                             dca, flag, new_areas, guild_changes)
                     smart_cases.append(change)
@@ -433,6 +433,7 @@ def check_guild_violations(smart_cases, best_change, meadow_limits=True):
     return filtered_cases, hab, violate_flag[hab]
 
 # set option flags
+efficient_steps = True
 unconstrained_case = False
 freeze_farm = True
 mm_till =  True
@@ -443,6 +444,7 @@ force_thru = 0
 preset_base_water = 73351
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
+if efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS"
 if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
 if factor_water: file_flag = file_flag + " H20_ADJUST"
 if mm_till: file_flag = file_flag + " MM_TILL"
@@ -570,12 +572,16 @@ priority = prioritize(new_percent, hab_limits)
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
 change_counter = 0
+recent_water_step = 1.0
 for step in range(force_thru+1, 6):
     # intialize step area limits
     trans_area = {x: 0 for x in trans_limits.keys()}
     retry = True
     while retry:
         change_counter += 1
+        if priority[1] == 'water':
+            recent_water_step = new_percent['water']
+            print recent_water_step
         output = "step " + str(step) + ", change " + str(change_counter) + \
                 ": hard/soft " + str(round(trans_area['hard'], 2)) + "/" + \
                 str(round(trans_area['soft'], 2))
@@ -594,10 +600,17 @@ for step in range(force_thru+1, 6):
             test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             test_percent = test_total/total['base']
             other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-#            if priority[1] == 'water' and \
-#                    new_percent['water'] - test_percent['water'] < 0.01:
-#                retry = False
-#                continue
+            if priority[1] == 'water' and efficient_steps and \
+                    recent_water_step - test_percent['water'] < 0.005:
+                smart_cases = [x for x in smart_cases if \
+                       x[6]['water'] < best_change[6]['water']]
+                output = "eliminating " + str(possible_changes - len(smart_cases)) + \
+                        " of " + str(possible_changes) + " possible changes." + \
+                        " (inefficient water savings)"
+                print output
+                log_file.write(output + "\n")
+                retry = len(smart_cases) > 0
+                continue
             if trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
                 smart_cases = [x for x in smart_cases if \
