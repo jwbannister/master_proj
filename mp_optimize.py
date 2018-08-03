@@ -461,8 +461,8 @@ def init_files():
     log_file = open(output_log, 'a')
     # read in current state of workbook for future writing
     wb = load_workbook(filename = file_path + file_name)
-    return mp_file, log_file, output_csv, wb
-mp_file, log_file, output_csv, wb = init_files()
+    return mp_file, log_file, output_excel, output_csv, wb
+mp_file, log_file, output_excel, output_csv, wb = init_files()
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
         usecols="I,J,K,L").dropna(how='any')
@@ -594,6 +594,10 @@ for step in range(force_thru+1, 6):
             test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             test_percent = test_total/total['base']
             other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
+#            if priority[1] == 'water' and \
+#                    new_percent['water'] - test_percent['water'] < 0.01:
+#                retry = False
+#                continue
             if trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
                 smart_cases = [x for x in smart_cases if \
