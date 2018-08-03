@@ -83,8 +83,8 @@ def build_factor_tables():
 
 def read_dca_info():
     dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
-            usecols="A,B,C,D,F", \
-            names=["dca", "area_ac", "area_sqmi", "base", "step0"])
+            usecols="A,B,C,D,E,G", \
+            names=["dca", "area_ac", "area_sqmi", "phase", "base", "step0"])
     dca_info.set_index('dca', inplace=True)
     return dca_info
 
@@ -347,9 +347,20 @@ def update_constraints(start_constraints, step_constraints):
     # do away with Till-Brine designation in new assignments
     new = [0 for x in dca_list]
     start_constraints = set_constraint(0, 'Till-Brine', new, start_constraints)
-
+    # Phase 1 - 5 areas only allowed to change in steps 1 - 3
+    before_5 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
+            if y <= 5]
+    for dca in before_5:
+        new = [1 if x in [1, 2, 3] else 0 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints)
+    # Phase 7a - 10 areas only allowed to change in steps 4 - 5
+    after_7a = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
+            if y >= 7.1]
+    for dca in after_7a:
+        new = [1 if x in [4, 5] else 0 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints)
     # read in and implement Ops constraints from LAUNCHPAD
-    constraints_input = mp_file.parse(sheet_name="Constraints Input", header=11, \
+    constraints_input = mp_file.parse(sheet_name="Constraints Input", header=15, \
             usecols="A:J")
     constraints_input.set_index('dca', inplace=True)
     step_start = ['Step' in str(x) for \
@@ -439,16 +450,19 @@ if design_only: file_flag = file_flag + " DESIGN_HAB_ONLY"
 if force_thru>0: file_flag = file_flag + " FORCE_THRU_" + str(force_thru)
 
 # read data from original Master Project planning workbook
-file_path = os.path.realpath(os.getcwd()) + "/"
-file_name = "MP LAUNCHPAD.xlsx"
-mp_file = pd.ExcelFile(file_path + file_name)
-timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
-output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
-output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
-output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
-log_file = open(output_log, 'a')
-# read in current state of workbook for future writing
-wb = load_workbook(filename = file_path + file_name)
+def init_files():
+    file_path = os.path.realpath(os.getcwd()) + "/"
+    file_name = "MP LAUNCHPAD.xlsx"
+    mp_file = pd.ExcelFile(file_path + file_name)
+    timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
+    output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
+    output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
+    output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
+    log_file = open(output_log, 'a')
+    # read in current state of workbook for future writing
+    wb = load_workbook(filename = file_path + file_name)
+    return mp_file, log_file, output_csv, wb
+mp_file, log_file, output_csv, wb = init_files()
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
         usecols="I,J,K,L").dropna(how='any')
@@ -663,8 +677,8 @@ ws = wb['MP_new']
 # write DCA/DCM assignments 
 for i in range(0, len(assignment_output), 1):
     offset = 22
-    ws.cell(row=i+offset, column=7).value = assignment_output['mp'][i]
-    ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
+    ws.cell(row=i+offset, column=8).value = assignment_output['mp'][i]
+    ws.cell(row=i+offset, column=9).value = assignment_output['step'][i]
 # write habitat areas and water use
 rw = 3
 col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
