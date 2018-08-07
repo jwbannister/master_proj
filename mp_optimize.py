@@ -445,21 +445,21 @@ def check_guild_violations(smart_cases, best_change, meadow_limits=True):
     return filtered_cases, hab, violate_flag[hab]
 
 # set option flags
-efficient_steps = True
-unconstrained_case = False
-freeze_farm = True
-mm_till =  True
-factor_water = True
-design_only = True
-truncate_steps = True
-force_thru = 0
+efficient_steps = True #stop step if water savings plateaus
+unconstrained_case = False #remove all constraints
+freeze_farm = True #keep "farm" managed veg as is
+mm_till =  True #adjust tillage constraints per M. Schaaf and M. Heilmann recommendations
+factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
+design_only = False #only allow changes to managed habitat or waterless DCMs
+truncate_steps = True #erase step if no water savings is acheived
+force_thru = 0
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
-if efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS"
-if freeze_farm: file_flag = file_flag + " FARM_FROZEN"
-if factor_water: file_flag = file_flag + " H20_ADJUST"
-if mm_till: file_flag = file_flag + " MM_TILL"
+if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
+if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
+if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
+if not mm_till: file_flag = file_flag + " MM_TILL_OFF"
 if design_only: file_flag = file_flag + " DESIGN_HAB_ONLY"
 if force_thru>0: file_flag = file_flag + " FORCE_THRU_" + str(force_thru)
 
