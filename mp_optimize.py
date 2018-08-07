@@ -347,9 +347,21 @@ def update_constraints(start_constraints, step_constraints):
     # do away with Till-Brine designation in new assignments
     new = [0 for x in dca_list]
     start_constraints = set_constraint(0, 'Till-Brine', new, start_constraints)
-    # Phase 1 - 5 areas only allowed to change in steps 1 - 3
+#    # Phase 1 - 5 areas only allowed to change in steps 1 - 3
+#    before_5 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
+#            if y <= 5]
+#    for dca in before_5:
+#        new = [1 if x in [1, 2, 3] else 0 for x in range(1, 6)]
+#        step_constraints = set_constraint(1, dca, new, step_constraints)
+    # Phase 1 - 3 areas only allowed to change in steps 1 - 2
+    before_3 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
+            if y <= 3]
+    for dca in before_3:
+        new = [1 if x in [1, 2] else 0 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints)
+    # Phase 4 - 5 areas only allowed to change in steps 1 - 3
     before_5 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
-            if y <= 5]
+            if y in [4, 5]]
     for dca in before_5:
         new = [1 if x in [1, 2, 3] else 0 for x in range(1, 6)]
         step_constraints = set_constraint(1, dca, new, step_constraints)
@@ -581,7 +593,6 @@ for step in range(force_thru+1, 6):
         change_counter += 1
         if priority[1] == 'water':
             recent_water_step = new_percent['water']
-            print recent_water_step
         output = "step " + str(step) + ", change " + str(change_counter) + \
                 ": hard/soft " + str(round(trans_area['hard'], 2)) + "/" + \
                 str(round(trans_area['soft'], 2))
