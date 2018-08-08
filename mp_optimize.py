@@ -325,15 +325,34 @@ def update_constraints(start_constraints, step_constraints):
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
     start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
     # DCAs currently assigned specific habitat values from field observations
-    # should remain unchanged
-    unique_dcms = dca_info.loc[['Unique' in x for x in dca_info['step0']]]
-    for dca in unique_dcms.index:
-        new = [1 if x == unique_dcms.loc[dca]['step0'] else 0 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
+    # should remain unchanged. No other DCAs can be assigned to the "unique" 
+    # as-built hab designations
+    unique_dcms = [x for x in dcm_list if 'Unique' in x]
+    unique_dcas = dca_info.loc[[x for x in dca_list \
+            if dca_info.loc[x]['step0'] in unique_dcms]].index.tolist()
+    for dca in dca_info.index:
+        if dca in unique_dcas:
+            new = [1 if x == dca_info.loc[dca]['step0'] else 0 for x in dcm_list]
+            start_constraints = set_constraint(1, dca, new, start_constraints)
+        else:
+            new = [0 if x in unique_dcms else 1 for x in dcm_list]
+            start_constraints = set_constraint(1, dca, new, start_constraints)
     current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
     for dca in current_hab.index:
         new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
+    # weird, specific DWM water usage cases are not allowed to be newly assigned
+    dwm_water_dcms = [x for x in dcm_list if '(DWM)' in x]
+    dwm_water_dcas = dca_info.loc[[x for x in dca_list \
+            if dca_info.loc[x]['step0'] in dwm_water_dcms]].index.tolist()
+    for dca in dca_info.index:
+        if dca in dwm_water_dcas:
+            new = [1 if x == dca_info.loc[dca]['step0'] \
+                    or x not in dwm_water_dcms else 0 for x in dcm_list]
+            start_constraints = set_constraint(1, dca, new, start_constraints)
+        else:
+            new = [0 if x in dwm_water_dcms else 1 for x in dcm_list]
+            start_constraints = set_constraint(1, dca, new, start_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
     waterless = dca_info.loc[[x in waterless_dict.keys() + \
             ['Brine (DWM)', 'Sand Fences'] \
@@ -397,11 +416,15 @@ def update_constraints(start_constraints, step_constraints):
         step_constraints = set_constraint(1, dca, new, step_constraints)
     return start_constraints, step_constraints
 
-def generate_possible_changes(smart_only=True):
+def generate_possible_changes(smart_only=True, force_change=False):
     smart_cases = []
     for dca in dca_list:
-        if step_constraints.loc[dca, step] != 0:
-            tmp = constraints.loc[dca].tolist()
+        if force_change or step_constraints.loc[dca, step] != 0:
+            if force_change:
+                tmp = [1 if 'Unique' not in x and '(DWM)' not in x else 0 \
+                        for x in dcm_list ]
+            else:
+                tmp = constraints.loc[dca].tolist()
             tmp_ind = [x for x, y in enumerate(tmp) if y == 1]
             for dcm_ind in tmp_ind:
                 if dcm_ind in soft_idx:
@@ -451,9 +474,9 @@ freeze_farm = True #keep "farm" managed veg as is
 mm_till =  True #adjust tillage constraints per M. Schaaf and M. Heilmann recommendations
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
-design_only = False #only allow changes to managed habitat or waterless DCMs
+design_only = True #only allow changes to managed habitat or waterless DCMs
 truncate_steps = True #erase step if no water savings is acheived
-force_thru = 0
+force = True
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
@@ -461,7 +484,7 @@ if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
 if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
 if not mm_till: file_flag = file_flag + " MM_TILL_OFF"
 if design_only: file_flag = file_flag + " DESIGN_HAB_ONLY"
-if force_thru>0: file_flag = file_flag + " FORCE_THRU_" + str(force_thru)
+if force: file_flag = file_flag + " FORCED_CHANGES"
 
 # read data from original Master Project planning workbook
 def init_files():
@@ -540,25 +563,13 @@ if mm_till:
             reverse_constraint)]
     start_constraints['Tillage'] = new
 
-# read in forced changes and evaluate existing cases
-if force_thru > 0:
+if force:
     forces = mp_file.parse(sheet_name="MP Analysis Input", header=0, skiprows=1, \
             usecols="J,K,L")
     forces.dropna(how='any', inplace=True)
-    forces = forces.loc[forces['step'] <= force_thru, :]
     forces.set_index('dca', inplace=True)
-    for i in range(1, force_thru+1):
-        step_force = forces.loc[forces['step']==i, :]
-        dca_info["step" + str(i)] = dca_info["step" + str(i-1)]
-        for j in step_force.index:
-            dca_info.loc[j, "step" + str(i)] = step_force.loc[j, 'force']
-            new = [0] * 5
-            step_constraints = set_constraint(1, j, new, step_constraints)
-    forced_steps = ["step" + str(x) for x in range(1, force_thru+1)]
-else:
-    forced_steps = []
 
-lake_case = {x:read_past_status(x) for x in ['base', 'step0'] + forced_steps}
+lake_case = {x:read_past_status(x) for x in ['base', 'step0']}
 if factor_water:
     calc_base_water = calc_totals(lake_case['base'], factors, \
             dca_info, base_case=True).loc['water']
@@ -576,19 +587,22 @@ for step in lake_case.keys():
 
 # initialize variables before loop
 constraints = start_constraints.copy()
-case = lake_case["step" + str(force_thru)].copy()
+case = lake_case["step0"].copy()
 case_factors = build_case_factors(case, factors)
-new_percent = total["step" + str(force_thru)]/total['base']
-new_total = total["step" + str(force_thru)].copy()
+new_percent = total["step0"]/total['base']
+new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
 change_counter = 0
 recent_water_step = 1.0
-for step in range(force_thru+1, 6):
+for step in range(1, 6):
     # intialize step area limits
     trans_area = {x: 0 for x in trans_limits.keys()}
     retry = True
+    if force:
+        step_forces = forces.loc[forces['step']==step, :]
+        force_counter = 0
     while retry:
         change_counter += 1
         if priority[1] == 'water':
@@ -600,18 +614,28 @@ for step in range(force_thru+1, 6):
         print printout('screen')
         log_file.write(output + "\n")
         log_file.write(printout('log') + "\n")
-        smart_cases = generate_possible_changes(smart_only=True)
+        force_trigger = force and force_counter<len(step_forces)
+        if force_trigger:
+            smart_cases = generate_possible_changes(smart_only=False, force_change=True)
+            change_force = step_forces.iloc[force_counter]
+            best_change = [x for x in smart_cases if \
+                    x[3] == change_force.name and \
+                    dcm_list[x[2].index(1)] == change_force['force']][0]
+            force_counter += 1
+        else:
+            smart_cases = generate_possible_changes(smart_only=True)
         retry = len(smart_cases) > 0
         while len(smart_cases) > 0:
-            possible_changes = len(smart_cases)
-            best_change = smart_cases[0]
+            if not force_trigger:
+                possible_changes = len(smart_cases)
+                best_change = smart_cases[0]
+                other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
             test_case = case.copy()
             test_case.loc[best_change[3]] = np.array(best_change[2])
             case_factors = build_case_factors(test_case, factors)
             test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             test_percent = test_total/total['base']
-            other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-            if priority[1] == 'water' and efficient_steps and \
+            if not force_trigger and priority[1] == 'water' and efficient_steps and \
                     recent_water_step - test_percent['water'] < 0.005:
                 smart_cases = [x for x in smart_cases if \
                        x[6]['water'] < best_change[6]['water']]
@@ -622,7 +646,7 @@ for step in range(force_thru+1, 6):
                 log_file.write(output + "\n")
                 retry = len(smart_cases) > 0
                 continue
-            if trans_area[best_change[4]] + \
+            if not force_trigger and trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
                 smart_cases = [x for x in smart_cases if \
                         x[4] != best_change[4] or \
@@ -635,10 +659,11 @@ for step in range(force_thru+1, 6):
                 log_file.write(output + "\n")
                 retry = len(smart_cases) > 0
                 continue
-            guild_available = get_guild_available(best_change, approach_factor=0.9)
-            smart_cases, hab, violation = \
-                    check_guild_violations(smart_cases, best_change)
-            if len(smart_cases) < possible_changes:
+            if not force_trigger:
+                guild_available = get_guild_available(best_change, approach_factor=0.9)
+                smart_cases, hab, violation = \
+                        check_guild_violations(smart_cases, best_change)
+            if not force_trigger and len(smart_cases) < possible_changes:
                 output = "eliminating " + \
                         str(possible_changes - len(smart_cases)) + " of " + \
                         str(possible_changes) + " possible changes." + " (" + \
@@ -661,7 +686,7 @@ for step in range(force_thru+1, 6):
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
             break
-    if  total["step" + str(step-1)]['water'] - new_total['water'] < 10 \
+    if total["step" + str(step-1)]['water'] - new_total['water'] < 10 \
             and truncate_steps:
         assignments["step" + str(step)] = assignments["step" + str(step-1)]
         total["step" + str(step)] = total["step" + str(step-1)]
@@ -684,9 +709,6 @@ assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
         zip(assignment_output['step5'], assignment_output['mp'])]
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
-if force_thru > 0:
-    for dca in forces.index:
-        assignment_output.loc[dca, 'step'] = forces.loc[dca]['step']
 assignment_output.to_csv(output_csv)
 
 summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
