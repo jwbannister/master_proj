@@ -366,38 +366,20 @@ def update_constraints(start_constraints, step_constraints):
     # do away with Till-Brine designation in new assignments
     new = [0 for x in dca_list]
     start_constraints = set_constraint(0, 'Till-Brine', new, start_constraints)
-#    # Phase 1 - 5 areas only allowed to change in steps 1 - 3
-#    before_5 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
-#            if y <= 5]
-#    for dca in before_5:
-#        new = [1 if x in [1, 2, 3] else 0 for x in range(1, 6)]
-#        step_constraints = set_constraint(1, dca, new, step_constraints)
-    # Phase 1 - 3 areas only allowed to change in steps 1 - 2
-    before_3 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
-            if y <= 3]
-    for dca in before_3:
-        new = [1 if x in [1, 2] else 0 for x in range(1, 6)]
-        step_constraints = set_constraint(1, dca, new, step_constraints)
-    # Phase 4 - 5 areas only allowed to change in steps 1 - 3
-    before_5 = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
-            if y in [4, 5]]
-    for dca in before_5:
-        new = [1 if x in [1, 2, 3] else 0 for x in range(1, 6)]
-        step_constraints = set_constraint(1, dca, new, step_constraints)
-    # Phase 7a - 10 areas only allowed to change in steps 4 - 5
-    after_7a = [x for x, y in zip(dca_info.index.tolist(), dca_info['phase']) \
-            if y >= 7.1]
-    for dca in after_7a:
-        new = [1 if x in [4, 5] else 0 for x in range(1, 6)]
-        step_constraints = set_constraint(1, dca, new, step_constraints)
+
     # read in and implement Ops constraints from LAUNCHPAD
     constraints_input = mp_file.parse(sheet_name="Constraints Input", header=15, \
             usecols="A:J")
     constraints_input.set_index('dca', inplace=True)
     step_start = ['Step' in str(x) for \
             x in constraints_input.index.tolist()].index(True)
+    phase_start = ['Phase' in str(x) for \
+            x in constraints_input.index.tolist()].index(True)
     dcm_constraint_input = constraints_input.iloc[:step_start, :].dropna(how='all')
-    step_constraint_input = constraints_input.iloc[step_start+1:, :].dropna(how='all')
+    step_constraint_input = constraints_input.iloc[step_start+1:phase_start, \
+            :].dropna(how='all')
+    phase_constraint_input = constraints_input.iloc[phase_start+1:, :].dropna(how='all')
+    phase_constraint_input.index = [str(x) for x in phase_constraint_input.index]
     for dca in dcm_constraint_input.index:
         if dcm_constraint_input.loc[dca, 'type']=='not':
             not_allowed = dcm_constraint_input.loc[dca].dropna().tolist()[1:]
@@ -414,6 +396,16 @@ def update_constraints(start_constraints, step_constraints):
             allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
             new = [1 if x in allowed else 0 for x in range(1, 6)]
         step_constraints = set_constraint(1, dca, new, step_constraints)
+    for phase in phase_constraint_input.index.tolist():
+        if phase_constraint_input.loc[phase, 'type']=='not':
+            not_allowed = phase_constraint_input.loc[phase].dropna().tolist()[1:]
+            new = [0 if x in not_allowed else 1 for x in range(1, 6)]
+        else:
+            allowed = phase_constraint_input.loc[phase].dropna().tolist()[1:]
+            new = [1 if x in allowed else 0 for x in range(1, 6)]
+        phase_dcas = dca_info.loc[dca_info['phase'] == float(phase)].index
+        for dca in phase_dcas:
+            step_constraints = set_constraint(1, dca, new, step_constraints)
     return start_constraints, step_constraints
 
 def generate_possible_changes(smart_only=True, force_change=False):
@@ -483,7 +475,7 @@ if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
 if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
 if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
 if not mm_till: file_flag = file_flag + " MM_TILL_OFF"
-if design_only: file_flag = file_flag + " DESIGN_HAB_ONLY"
+if not design_only: file_flag = file_flag + " EXPANDED_DCM_OPTIONS"
 if force: file_flag = file_flag + " FORCED_CHANGES"
 
 # read data from original Master Project planning workbook
@@ -495,11 +487,10 @@ def init_files():
     output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
     output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
     output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
-    log_file = open(output_log, 'a')
     # read in current state of workbook for future writing
     wb = load_workbook(filename = file_path + file_name)
-    return mp_file, log_file, output_excel, output_csv, wb
-mp_file, log_file, output_excel, output_csv, wb = init_files()
+    return mp_file, output_excel, output_csv, wb
+mp_file, output_excel, output_csv, wb = init_files()
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
         usecols="I,J,K,L").dropna(how='any')
@@ -568,6 +559,10 @@ if force:
             usecols="J,K,L")
     forces.dropna(how='any', inplace=True)
     forces.set_index('dca', inplace=True)
+    # prvent forced DCAs from changing before they are forced
+    for dca in forces.index:
+        new = [1 if x == forces.loc[dca]['step'] else 0 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints)
 
 lake_case = {x:read_past_status(x) for x in ['base', 'step0']}
 if factor_water:
@@ -594,17 +589,16 @@ new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
 tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
 
-change_counter = 0
 recent_water_step = 1.0
 for step in range(1, 6):
     # intialize step area limits
     trans_area = {x: 0 for x in trans_limits.keys()}
     retry = True
+    change_counter = 0
+    force_counter = 0
     if force:
         step_forces = forces.loc[forces['step']==step, :]
-        force_counter = 0
     while retry:
-        change_counter += 1
         if priority[1] == 'water':
             recent_water_step = new_percent['water']
         output = "step " + str(step) + ", change " + str(change_counter) + \
@@ -612,8 +606,6 @@ for step in range(1, 6):
                 str(round(trans_area['soft'], 2))
         print output
         print printout('screen')
-        log_file.write(output + "\n")
-        log_file.write(printout('log') + "\n")
         force_trigger = force and force_counter<len(step_forces)
         if force_trigger:
             smart_cases = generate_possible_changes(smart_only=False, force_change=True)
@@ -621,7 +613,6 @@ for step in range(1, 6):
             best_change = [x for x in smart_cases if \
                     x[3] == change_force.name and \
                     dcm_list[x[2].index(1)] == change_force['force']][0]
-            force_counter += 1
         else:
             smart_cases = generate_possible_changes(smart_only=True)
         retry = len(smart_cases) > 0
@@ -643,7 +634,6 @@ for step in range(1, 6):
                         " of " + str(possible_changes) + " possible changes." + \
                         " (inefficient water savings)"
                 print output
-                log_file.write(output + "\n")
                 retry = len(smart_cases) > 0
                 continue
             if not force_trigger and trans_area[best_change[4]] + \
@@ -656,7 +646,6 @@ for step in range(1, 6):
                         " of " + str(possible_changes) + " possible changes." + \
                         " (" + best_change[4] + " transition limit exceeded)"
                 print output
-                log_file.write(output + "\n")
                 retry = len(smart_cases) > 0
                 continue
             if not force_trigger:
@@ -669,7 +658,6 @@ for step in range(1, 6):
                         str(possible_changes) + " possible changes." + " (" + \
                         hab + " pushed " + violation + " target area range)"
                 print output
-                log_file.write(output + "\n")
                 retry = len(smart_cases) > 0
                 continue
             trans_area[best_change[4]] += dca_info.loc[best_change[3]]['area_sqmi']
@@ -680,11 +668,11 @@ for step in range(1, 6):
             new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
             new_percent = new_total/total['base']
             priority = prioritize(new_percent, hab_limits)
-            log_file.write(best_change[3] + " from " + prior_dcm + " to " + \
-                case.columns.tolist()[best_change[2].index(1)] + "\n")
             tracking = tracking.append({'dca': best_change[3], \
                     'mp': case.columns.tolist()[best_change[2].index(1)], \
                     'step': step}, ignore_index=True)
+            change_counter += 1
+            force_counter += 1
             break
     if total["step" + str(step-1)]['water'] - new_total['water'] < 10 \
             and truncate_steps:
