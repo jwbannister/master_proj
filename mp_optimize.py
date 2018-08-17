@@ -317,41 +317,28 @@ def update_constraints(start_constraints, step_constraints):
     # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     start_constraints = set_constraint(0, 'ENV', new, start_constraints)
-    # Channel areas to remain unchanged
-    for dca in ['Channel Area North', 'Channel Area South']:
-        new = [1 if x == 'ENV' else 0 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
     # no additional sand fences besides existing T1A1
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
     start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
-    # DCAs currently assigned specific habitat values from field observations
-    # should remain unchanged. No other DCAs can be assigned to the "unique" 
-    # as-built hab designations
+    # No other DCAs can be assigned to the "unique" as-built hab designations
+    # that exist in specific DCAs in step 0.
     unique_dcms = [x for x in dcm_list if 'Unique' in x]
     unique_dcas = dca_info.loc[[x for x in dca_list \
             if dca_info.loc[x]['step0'] in unique_dcms]].index.tolist()
-    for dca in dca_info.index:
-        if dca in unique_dcas:
-            new = [1 if x == dca_info.loc[dca]['step0'] else 0 for x in dcm_list]
-            start_constraints = set_constraint(1, dca, new, start_constraints)
-        else:
-            new = [0 if x in unique_dcms else 1 for x in dcm_list]
-            start_constraints = set_constraint(1, dca, new, start_constraints)
-    current_hab = dca_info.loc[[x in hdcm_list for x in dca_info['step0']]]
-    for dca in current_hab.index:
-        new = [1 if x == current_hab.loc[dca]['step0'] else 0 for x in dcm_list]
+    for dca in [x for x in dca_info.index if x not in unique_dcas]:
+        new = [0 if x in unique_dcms else 1 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
-    # weird, specific DWM water usage cases are not allowed to be newly assigned
-    dwm_water_dcms = [x for x in dcm_list if '(DWM)' in x]
-    dwm_water_dcas = dca_info.loc[[x for x in dca_list \
-            if dca_info.loc[x]['step0'] in dwm_water_dcms]].index.tolist()
+    # weird, specific cases are not allowed to be newly assigned
+    specific_dcms = [x for x in dcm_list if '(DWM)' in x or '(improved)' in x]
+    specific_dcas = dca_info.loc[[x for x in dca_list \
+            if dca_info.loc[x]['step0'] in specific_dcms]].index.tolist()
     for dca in dca_info.index:
-        if dca in dwm_water_dcas:
+        if dca in specific_dcas:
             new = [1 if x == dca_info.loc[dca]['step0'] \
-                    or x not in dwm_water_dcms else 0 for x in dcm_list]
+                    or x not in specific_dcms else 0 for x in dcm_list]
             start_constraints = set_constraint(1, dca, new, start_constraints)
         else:
-            new = [0 if x in dwm_water_dcms else 1 for x in dcm_list]
+            new = [0 if x in specific_dcms else 1 for x in dcm_list]
             start_constraints = set_constraint(1, dca, new, start_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
     waterless = dca_info.loc[[x in waterless_dict.keys() + \
@@ -368,7 +355,7 @@ def update_constraints(start_constraints, step_constraints):
     start_constraints = set_constraint(0, 'Till-Brine', new, start_constraints)
 
     # read in and implement Ops constraints from LAUNCHPAD
-    constraints_input = mp_file.parse(sheet_name="Constraints Input", header=15, \
+    constraints_input = mp_file.parse(sheet_name="Constraints Input", header=7, \
             usecols="A:J")
     constraints_input.set_index('dca', inplace=True)
     step_start = ['Step' in str(x) for \
@@ -413,7 +400,8 @@ def generate_possible_changes(smart_only=True, force_change=False):
     for dca in dca_list:
         if force_change or step_constraints.loc[dca, step] != 0:
             if force_change:
-                tmp = [1 if 'Unique' not in x and '(DWM)' not in x else 0 \
+                tmp = [1 if 'Unique' not in x and '(DWM)' not in x and \
+                        '(improved)' not in x else 0 \
                         for x in dcm_list ]
             else:
                 tmp = constraints.loc[dca].tolist()
