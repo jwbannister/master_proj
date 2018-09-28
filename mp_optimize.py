@@ -4,10 +4,9 @@ import numpy as np
 import datetime
 import os
 import sys
-from collections import OrderedDict
 from openpyxl import worksheet
 from openpyxl import load_workbook
-from itertools import compress
+#from itertools import compress
 
 class color:
    PURPLE = '\033[95m'
@@ -447,26 +446,6 @@ def check_guild_violations(smart_cases, best_change, meadow_limits=True):
             comp[violate_flag[hab]](x[6][hab], best_change[6][hab])]
     return filtered_cases, hab, violate_flag[hab]
 
-# set option flags
-efficient_steps = True #stop step if water savings plateaus
-unconstrained_case = False #remove all constraints
-freeze_farm = True #keep "farm" managed veg as is
-mm_till =  True #adjust tillage constraints per M. Schaaf and M. Heilmann recommendations
-factor_water = True #adjust water useage values so base water matches preset value
-preset_base_water = 73351
-design_only = True #only allow changes to managed habitat or waterless DCMs
-truncate_steps = True #erase step if no water savings is acheived
-force = False
-file_flag = ""
-if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
-if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
-if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
-if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
-if not mm_till: file_flag = file_flag + " MM_TILL_OFF"
-if not design_only: file_flag = file_flag + " EXPANDED_DCM_OPTIONS"
-if force: file_flag = file_flag + " FORCED_CHANGES"
-
-# read data from original Master Project planning workbook
 def init_files():
     file_path = os.path.realpath(os.getcwd()) + "/"
     file_name = "MP LAUNCHPAD.xlsx"
@@ -478,6 +457,27 @@ def init_files():
     # read in current state of workbook for future writing
     wb = load_workbook(filename = file_path + file_name)
     return mp_file, output_excel, output_csv, wb
+
+# set option flags
+efficient_steps = True #stop step if water savings plateaus
+unconstrained_case = False #remove all constraints
+freeze_farm = True #keep "farm" managed veg as is
+mm_till =  True #adjust tillage constraints per M. Schaaf and M. Heilmann recommendations
+factor_water = True #adjust water useage values so base water matches preset value
+preset_base_water = 73351
+design_only = True #only allow changes to managed habitat or waterless DCMs
+truncate_steps = True #erase step if no water savings is acheived
+force = True
+file_flag = ""
+if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
+if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
+if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
+if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
+if not mm_till: file_flag = file_flag + " MM_TILL_OFF"
+if not design_only: file_flag = file_flag + " EXPANDED_DCM_OPTIONS"
+if force: file_flag = file_flag + " FORCED_CHANGES"
+
+# read data from original Master Project planning workbook
 mp_file, output_excel, output_csv, wb = init_files()
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
@@ -493,7 +493,8 @@ dcm_list = hab2dcm['mp_name'].tolist()
 dcm_list.remove('total')
 hab_terms = ['BWF', 'MWF', 'SNPL', 'MSB', 'Meadow']
 hdcm_identify = [any([y in x for y in hab_terms]) for x in dcm_list]
-hdcm_list = list(compress(dcm_list, hdcm_identify))
+#hdcm_list = list(compress(dcm_list, hdcm_identify))
+hdcm_list = [i for idx, i in enumerate(dcm_list) if hdcm_identify[idx]]
 guild_list = [x for x in factors['design'].columns if x != 'water']
 
 # read and set preferences for waterless DCMs
