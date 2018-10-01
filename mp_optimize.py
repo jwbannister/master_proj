@@ -458,11 +458,10 @@ def init_files():
     wb = load_workbook(filename = file_path + file_name)
     return mp_file, output_excel, output_csv, wb
 
-# set option flags
+# set algorithm options and filename flags
 efficient_steps = True #stop step if water savings plateaus
 unconstrained_case = False #remove all constraints
 freeze_farm = True #keep "farm" managed veg as is
-mm_till =  True #adjust tillage constraints per M. Schaaf and M. Heilmann recommendations
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
 design_only = True #only allow changes to managed habitat or waterless DCMs
@@ -473,7 +472,6 @@ if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
 if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
 if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
-if not mm_till: file_flag = file_flag + " MM_TILL_OFF"
 if not design_only: file_flag = file_flag + " EXPANDED_DCM_OPTIONS"
 if force: file_flag = file_flag + " FORCED_CHANGES"
 
@@ -533,15 +531,6 @@ if freeze_farm:
     for dca in farm_dcas.index:
         new = [1 if x == 'Veg 08' else 0 for x in dcm_list]
         start_constraints = set_constraint(1, dca, new, start_constraints)
-
-if mm_till:
-    # remove tillage constraints as recommended by Mark Schaaf and Mica Heilmann
-    mm_list = ['T10-1', 'T10-1a', 'T13-1N', 'T13-1S', 'T17-1', 'T17-2', 'T2-5', \
-            'T29-2', 'T29-3', 'T29-4', 'T36-2E', 'T36-2W', 'T37-2', 'T9']
-    reverse_constraint = [1 if x in mm_list else 0 for x in dca_list]
-    new = [max([x, y]) for x, y in zip(start_constraints['Tillage'].tolist(), \
-            reverse_constraint)]
-    start_constraints['Tillage'] = new
 
 if force:
     forces = mp_file.parse(sheet_name="MP Analysis Input", header=0, skiprows=1, \
