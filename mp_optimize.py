@@ -446,12 +446,11 @@ def check_guild_violations(smart_cases, best_change, meadow_limits=True):
             comp[violate_flag[hab]](x[6][hab], best_change[6][hab])]
     return filtered_cases, hab, violate_flag[hab]
 
-def init_files():
+def initialize_files():
     file_path = os.path.realpath(os.getcwd()) + "/"
     file_name = "MP LAUNCHPAD.xlsx"
     mp_file = pd.ExcelFile(file_path + file_name)
     timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
-    output_log = file_path + "output/" + "MP " + "LOG " + timestamp + file_flag + '.txt'
     output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
     output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
     # read in current state of workbook for future writing
@@ -476,7 +475,7 @@ if not design_only: file_flag = file_flag + " EXPANDED_DCM_OPTIONS"
 if force: file_flag = file_flag + " FORCED_CHANGES"
 
 # read data from original Master Project planning workbook
-mp_file, output_excel, output_csv, wb = init_files()
+mp_file, output_excel, output_csv, wb = initialize_files()
 
 hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
         usecols="I,J,K,L").dropna(how='any')
