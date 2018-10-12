@@ -6,7 +6,6 @@ import os
 import sys
 from openpyxl import worksheet
 from openpyxl import load_workbook
-#from itertools import compress
 
 class color:
    PURPLE = '\033[95m'
@@ -68,16 +67,20 @@ def patch_worksheet():
 patch_worksheet()
 
 def build_factor_tables():
-    design_factors = mp_file.parse(sheet_name="Design HV & WD", header=2, \
-            usecols="A,C,D,E,F,G,H", \
-            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[0:31]
-    design_factors.set_index('dcm', inplace=True)
+    design = mp_file.parse(sheet_name="Design HV & WD", header=2, \
+            usecols="A,D,E,F,G,H,I", \
+            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])
+    design.dropna(how='all', inplace=True)
+    design.set_index('dcm', inplace=True)
     # build up custom habitat and water factor tables
-    asbuilt_info = mp_file.parse(sheet_name="As-Built HV & WD", header=0, \
+    asbuilt = mp_file.parse(sheet_name="As-Built HV & WD", header=0, \
             usecols="A,B,C,D,E,F,G,H", \
             names=["dca", "dcm", "bw", "mw", "pl", "ms", "md", "water"])
-    asbuilt_info.set_index(['dca', 'dcm'], inplace=True)
-    factors = {'asbuilt':asbuilt_info.copy(), 'design':design_factors.copy()}
+    asbuilt.dropna(how='all', inplace=True)
+    asbuilt['water'] = [design.loc[d]['water'] if w == ' - ' \
+            else w for d, w in zip(asbuilt['dcm'], asbuilt['water'])]
+    asbuilt.set_index(['dca', 'dcm'], inplace=True)
+    factors = {'asbuilt':asbuilt.copy(), 'design':design.copy()}
     return factors
 
 def read_dca_info():
@@ -87,16 +90,30 @@ def read_dca_info():
     dca_info.set_index('dca', inplace=True)
     return dca_info
 
-def read_past_status(stp):
-    assigns = [np.array(hab2dcm['mp_name']) \
-            == dca_info[stp][x] for x in range(0, len(dca_info))]
-    assigns = [assigns[x].astype(int).tolist() \
-            for x in range(0, len(assigns))]
-    case_df = pd.DataFrame(assigns)
-    case_df.index = dca_info.index
-    case_df.columns = hab2dcm['mp_name']
-    case_df.drop('total', axis=1, inplace=True)
-    return case_df
+def build_past_status(stp):
+    state = dca_info[stp]
+    stp_factors = get_factors(state)
+    stp_status = stp_factors.join(dca_info[['area_ac', 'area_sqmi']], on='dca')
+    cols = [x + "_ac" if x != 'water' else x + "_af/y" for x in stp_factors.columns]
+    for i in stp_factors.columns:
+        col_name = i + "_ac" if i != 'water' else i + "_af/y"
+        stp_status[col_name] = stp_factors[i] * stp_status['area_ac']
+    return stp_status
+
+def get_factors(state):
+    a = zip(state.index, state)
+    b = pd.DataFrame()
+    for i in a:
+        try:
+            c = factors['asbuilt'].loc[i[0], i[1]]
+        except:
+            c = factors['design'].loc[i[1]]
+        d = pd.DataFrame(c).transpose()
+        d['dca'] = i[0]
+        d['dcm'] = i[1]
+        b = b.append(d)
+    b.set_index(['dca', 'dcm'], inplace=True)
+    return b
 
 def define_soft():
     soft_dcm_input = mp_file.parse(sheet_name="MP Analysis Input", header=6, \
@@ -105,37 +122,23 @@ def define_soft():
     soft_idx = [x for x, y in enumerate(dcm_list) if y in soft_dcms]
     return soft_idx
 
-def get_area(dca_case, dca_name, custom_factors, dca_info, hab):
-    dcm_name = dcm_list[dca_case.index(1)]
-    if (dca_name, dcm_name) in [(x, y) for x, y in custom_factors['mp'].index.tolist()]:
-       case_factors = custom_factors['mp'].loc[dca_name, dcm_name]
-    else:
-       case_factors = custom_factors['design'].iloc[dca_case.index(1)]
-    area = case_factors * dca_info.loc[dca_name]['area_sqmi']
-    return area[hab]
-
-def evaluate_dca_change(dca_case, previous_case, previous_factors, factors, \
-        priority, dca_name, dca_info, waterless_preferences):
-    previous_case_factors = previous_factors.loc[previous_case.name]
-    dcm_name = dcm_list[dca_case.index(1)]
-    if (dca_name, dcm_name) in [(x, y) for x, y in \
-            factors['asbuilt'].index.tolist()]:
-       case_factors = factors['asbuilt'].loc[dca_name, dcm_name]
-    else:
-       case_factors = factors['design'].loc[dcm_name]
+def evaluate_dca_change(dca, dcm, state, factors, \
+        priority, waterless_dict):
+    current_factors = state.loc[dca][factor_keys].squeeze()
+    new_factors = factors['design'].loc[dcm]
     if priority[1]=='water':
-        smart = case_factors['water'] - previous_case_factors['water'] < 0
-        benefit1 = previous_case_factors['water'] - case_factors['water']
+        smart = new_factors['water'] - current_factors['water'] < 0
+        benefit1 = current_factors['water'] - new_factors['water']
         try:
-            benefit2 = waterless_preferences[dcm_name]
+            benefit2 = waterless_dict[dcm_name]
         except:
             benefit2 = -6
     else:
-        p1_increase = case_factors[priority[1]] - previous_case_factors[priority[1]]
-        water_increase = 100 + (case_factors['water'] - previous_case_factors['water'])
+        p1_increase = new_factors[priority[1]] - current_factors[priority[1]]
+        water_increase = 100 + (new_factors['water'] - current_factors['water'])
         smart = p1_increase > 0
         benefit1 = p1_increase / water_increase
-        p2_increase = case_factors[priority[2]] - previous_case_factors[priority[2]]
+        p2_increase = new_factors[priority[2]] - current_factors[priority[2]]
         benefit2 = p2_increase / water_increase
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
@@ -151,18 +154,6 @@ def prioritize(value_percents, hab_minimums):
     else:
         return {1: 'water', 2: value_percents[0:5].idxmin()}
 
-def build_custom_steps(step, step_list, data):
-    factors = data.loc[data['step']==step_list[0], :].copy()
-    sub_steps = [step_list[x] for x in range(1, step_list.index(step)+1)]
-    for sub in sub_steps:
-        sub_df = data.loc[data['step']==sub, :].copy()
-        for idx in factors.index:
-            if idx in sub_df.index:
-                factors.drop(idx, inplace=True)
-        factors = factors.append(sub_df)
-    factors.drop('step', axis=1, inplace=True)
-    return factors
-
 def try_get_dcm(row):
     try:
         return dcm_list[row.tolist().index(1)]
@@ -173,44 +164,6 @@ def get_assignments(case, dca_list, dcm_list):
     assignments = pd.DataFrame([try_get_dcm(row) \
             for index, row in case.iterrows()], index=dca_list, columns=['dcm'])
     return assignments
-
-def build_case_factors(lake_case, factors, base_case=False):
-    case_factors = pd.DataFrame()
-    for idx in range(0, len(lake_case)):
-        dca_name = lake_case.iloc[idx].name
-        dca_case = lake_case.iloc[idx]
-        try:
-            dcm_name = dcm_list[dca_case.tolist().index(1)]
-        except:
-            dcm_name = dca_info.loc[dca_name, 'step0']
-        tmp = {x:[] for x in factors['asbuilt'].columns}
-        for i in tmp.keys():
-            try:
-                tmp[i] = factors['asbuilt'].loc[dca_name, dcm_name][i]
-            except:
-                tmp[i] = factors['design'].loc[dcm_name][i]
-            if np.isnan(tmp[i]):
-                tmp[i] = factors['design'].loc[dcm_name][i]
-        tmp['dca'] = dca_name
-        if base_case:
-            tmp['water'] = factors['design'].loc[dcm_name]['water']
-        case_factors = case_factors.append(tmp, ignore_index=True)
-    case_factors.set_index('dca', inplace=True)
-    return case_factors
-
-def build_single_case_factors(dca_case, dca_name, factors):
-    single_case_factors = pd.DataFrame()
-    dcm_name = dcm_list[dca_case.index(1)]
-    try:
-        single_case_factors = factors['asbuilt'].loc[(dca_name, dcm_name)]
-    except:
-        single_case_factors = factors['design'].loc[dcm_name]
-    return single_case_factors
-
-def calc_totals(case, factors, dca_info, base_case=False):
-    dca_list = dca_info.index.tolist()
-    case_factors = build_case_factors(case, factors, base_case)
-    return case_factors.multiply(np.array(dca_info['area_ac']), axis=0).sum()
 
 def printout(flag):
     readout = ""
@@ -300,33 +253,25 @@ def get_guild_available(best_change, approach_factor=0.9):
     return guild_available
 
 def initialize_constraints():
-    start_constraints = pd.DataFrame(np.ones((len(dca_list), len(dcm_list)), \
+    dcm_constraints = pd.DataFrame(np.ones((len(dca_list), len(dcm_list)), \
             dtype=np.int8))
-    start_constraints.index = dca_list
-    start_constraints.columns = dcm_list
+    dcm_constraints.index = dca_list
+    dcm_constraints.columns = dcm_list
     step_constraints = pd.DataFrame(np.ones((len(dca_list), 5), dtype=np.int8))
     step_constraints.index = dca_list
     step_constraints.columns = range(1, 6)
-    return start_constraints, step_constraints
+    return dcm_constraints, step_constraints
 
-def update_constraints(start_constraints, step_constraints):
+def update_constraints(dcm_constraints, step_constraints):
     # set hard-wired constraints
     # Constraint to only remove "Meadow" habitat is wired into
     # check_exceed_area function
     # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
     new = [1 if 'Channel' in x else 0 for x in dca_list]
-    start_constraints = set_constraint(0, 'ENV', new, start_constraints)
+    dcm_constraints = set_constraint(0, 'ENV', new, dcm_constraints)
     # no additional sand fences besides existing T1A1
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
-    start_constraints = set_constraint(0, 'Sand Fences', new, start_constraints)
-    # No other DCAs can be assigned to the "unique" as-built hab designations
-    # that exist in specific DCAs in step 0.
-    unique_dcms = [x for x in dcm_list if 'Unique' in x]
-    unique_dcas = dca_info.loc[[x for x in dca_list \
-            if dca_info.loc[x]['step0'] in unique_dcms]].index.tolist()
-    for dca in [x for x in dca_info.index if x not in unique_dcas]:
-        new = [0 if x in unique_dcms else 1 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
+    dcm_constraints = set_constraint(0, 'Sand Fences', new, dcm_constraints)
     # weird, specific cases are not allowed to be newly assigned
     specific_dcms = [x for x in dcm_list if '(DWM)' in x or '(improved)' in x]
     specific_dcas = dca_info.loc[[x for x in dca_list \
@@ -335,23 +280,20 @@ def update_constraints(start_constraints, step_constraints):
         if dca in specific_dcas:
             new = [1 if x == dca_info.loc[dca]['step0'] \
                     or x not in specific_dcms else 0 for x in dcm_list]
-            start_constraints = set_constraint(1, dca, new, start_constraints)
+            dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
         else:
             new = [0 if x in specific_dcms else 1 for x in dcm_list]
-            start_constraints = set_constraint(1, dca, new, start_constraints)
+            dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
     waterless = dca_info.loc[[x in waterless_dict.keys() + \
             ['Brine (DWM)', 'Sand Fences'] \
             for x in dca_info['step0']]]
     for dca in waterless.index:
         new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
-    # all DCAs under dust control, no "None" DCMs allowed
+        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
+    # all DCAs under dust control, no new "None" DCMs allowed
     new = [0 for x in dca_list]
-    start_constraints = set_constraint(0, 'None', new, start_constraints)
-    # do away with Till-Brine designation in new assignments
-    new = [0 for x in dca_list]
-    start_constraints = set_constraint(0, 'Till-Brine', new, start_constraints)
+    dcm_constraints = set_constraint(0, 'None', new, dcm_constraints)
 
     # read in and implement Ops constraints from LAUNCHPAD
     constraints_input = mp_file.parse(sheet_name="Constraints Input", header=7, \
@@ -373,7 +315,7 @@ def update_constraints(start_constraints, step_constraints):
         else:
             allowed = dcm_constraint_input.loc[dca].dropna().tolist()[1:]
             new = [1 if x in allowed else 0 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
+        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
     for dca in step_constraint_input.index:
         if step_constraint_input.loc[dca, 'type']=='not':
             not_allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
@@ -392,14 +334,14 @@ def update_constraints(start_constraints, step_constraints):
         phase_dcas = dca_info.loc[dca_info['phase'] == float(phase)].index
         for dca in phase_dcas:
             step_constraints = set_constraint(1, dca, new, step_constraints)
-    return start_constraints, step_constraints
+    return dcm_constraints, step_constraints
 
 def generate_possible_changes(smart_only=True, force_change=False):
     smart_cases = []
     for dca in dca_list:
         if force_change or step_constraints.loc[dca, step] != 0:
             if force_change:
-                tmp = [1 if 'Unique' not in x and '(DWM)' not in x and \
+                tmp = [1 if 'asbuilt' not in x and '(DWM)' not in x and \
                         '(improved)' not in x else 0 \
                         for x in dcm_list ]
             else:
@@ -412,22 +354,22 @@ def generate_possible_changes(smart_only=True, force_change=False):
                     flag='hard'
                 b = [0 for x in tmp]
                 b[dcm_ind] = 1
-                case_eval = evaluate_dca_change(b, case.loc[dca], case_factors, \
-                        factors, priority, dca, dca_info, waterless_dict)
+                dcm = dcm_list[dcm_ind]
+                case_eval = evaluate_dca_change(dca, dcm, new_state, factors, priority, \
+                        waterless_dict)
                 if smart_only and not case_eval['smart']:
                     continue
                 else:
-                    new_case_factors = build_single_case_factors(b, dca, factors)
-                    new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_case_factors[x] \
-                            for x in guild_list + ['water']}
-                    old_case_factors = build_single_case_factors(case.loc[dca].tolist(), \
-                            dca, factors)
-                    old_areas = {x: dca_info.loc[dca]['area_sqmi'] * old_case_factors[x] \
-                            for x in guild_list + ['water']}
-                    guild_changes = {x: new_areas[x] - old_areas[x] \
-                            for x in guild_list + ['water']}
+                    new_factors = factors['design'].loc[dcm]
+                    new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_factors[x] \
+                            for x in factor_keys}
+                    current_factors = new_state.loc[dca][factor_keys].squeeze()
+                    current_areas = {x: dca_info.loc[dca]['area_sqmi'] * \
+                            current_factors[x] for x in factor_keys}
+                    guild_changes = {x: new_areas[x] - current_areas[x] \
+                            for x in factor_keys}
                     change = (case_eval['benefit1'], case_eval['benefit2'], b, \
-                            dca, flag, new_areas, guild_changes)
+                            dca, flag, current_areas, guild_changes, dcm)
                     smart_cases.append(change)
     smart_cases = sorted(smart_cases, key=lambda x: (x[0], x[1]), \
             reverse=True)
@@ -463,9 +405,9 @@ unconstrained_case = False #remove all constraints
 freeze_farm = True #keep "farm" managed veg as is
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
-design_only = True #only allow changes to managed habitat or waterless DCMs
-truncate_steps = True #erase step if no water savings is acheived
-force = True
+design_only = False #only allow changes to managed habitat or waterless DCMs
+truncate_steps = True #erase step changes if no water savings is acheived
+force = False #force changes
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
@@ -477,27 +419,23 @@ if force: file_flag = file_flag + " FORCED_CHANGES"
 # read data from original Master Project planning workbook
 mp_file, output_excel, output_csv, wb = initialize_files()
 
-hab2dcm = mp_file.parse(sheet_name="Cost Analysis Input", header=0, \
-        usecols="I,J,K,L").dropna(how='any')
-hab2dcm = hab2dcm.append({'mp_name':'total', 'desc':'x', 'hab_id':'x', 'dust_dcm':'x'},
-        ignore_index=True)
-hab_dict = pd.Series(hab2dcm.dust_dcm.values, index=hab2dcm.mp_name)
+design_dcms = mp_file.parse(sheet_name="Design HV & WD", header=2, \
+        usecols="A,C").dropna(how='any')
+dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 
 factors = build_factor_tables()
 dca_info = read_dca_info()
 dca_list = dca_info.index.tolist()
-dcm_list = hab2dcm['mp_name'].tolist()
-dcm_list.remove('total')
-hab_terms = ['BWF', 'MWF', 'SNPL', 'MSB', 'Meadow']
-hdcm_identify = [any([y in x for y in hab_terms]) for x in dcm_list]
-#hdcm_list = list(compress(dcm_list, hdcm_identify))
-hdcm_list = [i for idx, i in enumerate(dcm_list) if hdcm_identify[idx]]
+dcm_list = design_dcms['MP_id'].tolist()
+hab_list = [design_dcms['MP_id'][idx] for idx, i \
+                in enumerate(design_dcms['Type']) if i=='Habitat DCM']
 guild_list = [x for x in factors['design'].columns if x != 'water']
+factor_keys = [x for x in factors['design'].columns]
 
 # read and set preferences for waterless DCMs
-waterless_input = mp_file.parse(sheet_name="MP Analysis Input", header=18, \
+waterless_preference = mp_file.parse(sheet_name="MP Analysis Input", header=18, \
         usecols="A").iloc[:, 0].tolist()
-waterless_dict = {x:-y for x, y in zip(waterless_input, range(1, 6))}
+waterless_dict = {x:-y for x, y in zip(waterless_preference, range(1, 6))}
 
 # generate list of "soft transition" DCMS
 soft_idx = define_soft()
@@ -511,56 +449,54 @@ hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", \
 hab_limits = dict(zip(hab_limit_input.iloc[:, 1].tolist(), \
         hab_limit_input.iloc[:, 0].tolist()))
 
-start_constraints, step_constraints = initialize_constraints()
+dcm_constraints, step_constraints = initialize_constraints()
 
 if not unconstrained_case:
-    start_constraints, step_constraints = \
-            update_constraints(start_constraints, step_constraints)
+    dcm_constraints, step_constraints = \
+            update_constraints(dcm_constraints, step_constraints)
 
 # only allow changes to waterless or design habitat DCMs
 if design_only:
-    allowed_list = hdcm_list + waterless_dict.keys()
+    allowed_list = hab_list + waterless_dict.keys()
     for dca in dca_info.index:
         allowed = allowed_list + [dca_info.loc[dca]['step0']]
         new = [1 if x in allowed else 0 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
+        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
 
 if freeze_farm:
     farm_dcas = dca_info.loc[[x == 'Veg 08' for x in dca_info['step0']]]
     for dca in farm_dcas.index:
         new = [1 if x == 'Veg 08' else 0 for x in dcm_list]
-        start_constraints = set_constraint(1, dca, new, start_constraints)
+        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
 
 if force:
     forces = mp_file.parse(sheet_name="MP Analysis Input", header=0, skiprows=1, \
             usecols="J,K,L")
     forces.dropna(how='any', inplace=True)
     forces.set_index('dca', inplace=True)
-    # prvent forced DCAs from changing before they are forced
+    # prevent forced DCAs from changing before they are forced
     for dca in forces.index:
         new = [1 if x == forces.loc[dca]['step'] else 0 for x in range(1, 6)]
         step_constraints = set_constraint(1, dca, new, step_constraints)
 
-lake_case = {x:read_past_status(x) for x in ['base', 'step0']}
+lake_state_pre_water_factor = {x:build_past_status(x) for x in ['base', 'step0']}
 if factor_water:
-    calc_base_water = calc_totals(lake_case['base'], factors, \
-            dca_info, base_case=True).loc['water']
+    calc_base_water = lake_state_pre_water_factor['base']['water_af/y'].sum()
     water_adjust = preset_base_water/calc_base_water
     for j in factors.keys():
         factors[j]['water'] = factors[j]['water'] * water_adjust
+lake_state = {x:build_past_status(x) for x in ['base', 'step0']}
+
 total = {}
 assignments = {}
-for step in lake_case.keys():
-    if step=='base':
-        total[step] = calc_totals(lake_case[step], factors, dca_info, base_case=True)
-    else:
-        total[step] = calc_totals(lake_case[step], factors, dca_info)
-    assignments[step] = get_assignments(lake_case[step], dca_list, dcm_list)
+for stp in lake_state.keys():
+    total[stp] = lake_state[stp][['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', 'md_ac', \
+            'water_af/y']].sum()
+    total[stp].index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
 
 # initialize variables before loop
-constraints = start_constraints.copy()
-case = lake_case["step0"].copy()
-case_factors = build_case_factors(case, factors)
+constraints = dcm_constraints.copy()
+new_state = lake_state["step0"].copy()
 new_percent = total["step0"]/total['base']
 new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
@@ -591,17 +527,30 @@ for step in range(1, 6):
                     x[3] == change_force.name and \
                     dcm_list[x[2].index(1)] == change_force['force']][0]
         else:
-            smart_cases = generate_possible_changes(smart_only=True)
+            smart_cases = generate_possible_changes()
         retry = len(smart_cases) > 0
         while len(smart_cases) > 0:
             if not force_trigger:
                 possible_changes = len(smart_cases)
                 best_change = smart_cases[0]
                 other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-            test_case = case.copy()
-            test_case.loc[best_change[3]] = np.array(best_change[2])
-            case_factors = build_case_factors(test_case, factors)
-            test_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
+            test_case = new_state.copy()
+            test_ind = [ind for ind, x in enumerate(test_case.index) if \
+                    x[0] == best_change[3]][0]
+            tmp_ind = test_case.index.tolist()
+            tmp_ind[test_ind] = (best_change[3], best_change[7])
+            test_case.index = pd.MultiIndex.from_tuples(tmp_ind, \
+                    names=['dca', 'dcm'])
+            for i in factor_keys:
+                test_case.loc[best_change[3], i] = \
+                        factors['design'].loc[best_change[7]][i]
+                col_name = i + "_ac" if i != 'water' else i + "_af/y"
+                test_case.loc[best_change[3], col_name] = \
+                        test_case.loc[best_change[3],'area_ac'].values[0] * \
+                        test_case.loc[best_change[3], i].values[0]
+            test_total = test_case[['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', \
+                    'md_ac', 'water_af/y']].sum()
+            test_total.index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
             test_percent = test_total/total['base']
             if not force_trigger and priority[1] == 'water' and efficient_steps and \
                     recent_water_step - test_percent['water'] < 0.005:
@@ -638,27 +587,24 @@ for step in range(1, 6):
                 retry = len(smart_cases) > 0
                 continue
             trans_area[best_change[4]] += dca_info.loc[best_change[3]]['area_sqmi']
-            prior_assignment = case.loc[best_change[3]].tolist()
-            prior_dcm = case.columns.tolist()[prior_assignment.index(1)]
-            case.loc[best_change[3]] = np.array(best_change[2])
             constraints.loc[best_change[3]] = np.array(best_change[2])
-            new_total = case_factors.multiply(dca_info['area_ac'], axis=0).sum()
-            new_percent = new_total/total['base']
             priority = prioritize(new_percent, hab_limits)
+            new_state = test_case.copy()
+            new_total = test_total.copy()
+            new_percent = test_percent.copy()
             tracking = tracking.append({'dca': best_change[3], \
-                    'mp': case.columns.tolist()[best_change[2].index(1)], \
-                    'step': step}, ignore_index=True)
+                    'mp': best_change[7], 'step': step}, ignore_index=True)
             change_counter += 1
             force_counter += 1
             break
     if total["step" + str(step-1)]['water'] - new_total['water'] < 10 \
             and truncate_steps:
-        assignments["step" + str(step)] = assignments["step" + str(step-1)]
+        lake_state["step" + str(step)] = lake_state["step" + str(step-1)]
         total["step" + str(step)] = total["step" + str(step-1)]
         tracking = tracking.loc[tracking['step'] != step]
     else:
-        assignments["step" + str(step)] = get_assignments(case, dca_list, dcm_list)
-        total["step" + str(step)] = new_total
+        lake_state["step" + str(step)] = new_state.copy()
+        total["step" + str(step)] = new_total.copy()
 water_min = min([total[x]['water'] for x in total.keys()])
 total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
@@ -680,7 +626,7 @@ summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
 summary_melt = pd.melt(summary_df, id_vars=['area_sqmi'], \
         value_vars=['step'+str(i) for i in range(0, 6)], \
         var_name='step', value_name='dcm')
-summary_melt.replace(hab_dict, inplace=True)
+summary_melt.replace(dcm_dict, inplace=True)
 summary = summary_melt.groupby(['dcm', 'step'])['area_sqmi'].agg('sum').unstack()
 tot = summary.sum().rename('total')
 summary = summary.append(tot)
@@ -690,7 +636,7 @@ summary.drop('None', inplace=True)
 # write results into output workbook
 ws = wb['MP_new']
 # write DCA/DCM assignments 
-for i in range(0, len(assignment_output), 1):
+for i in range(0, len(lake_state), 1):
     offset = 22
     ws.cell(row=i+offset, column=8).value = assignment_output['mp'][i]
     ws.cell(row=i+offset, column=9).value = assignment_output['step'][i]
