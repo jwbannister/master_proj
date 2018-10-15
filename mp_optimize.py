@@ -6,6 +6,7 @@ import os
 import sys
 from openpyxl import worksheet
 from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 class color:
    PURPLE = '\033[95m'
@@ -69,7 +70,7 @@ patch_worksheet()
 def build_factor_tables():
     design = mp_file.parse(sheet_name="Design HV & WD", header=2, \
             usecols="A,D,E,F,G,H,I", \
-            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])
+            names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[:len(dcm_list)]
     design.dropna(how='all', inplace=True)
     design.set_index('dcm', inplace=True)
     # build up custom habitat and water factor tables
@@ -405,7 +406,6 @@ unconstrained_case = False #remove all constraints
 freeze_farm = True #keep "farm" managed veg as is
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
-design_only = False #only allow changes to managed habitat or waterless DCMs
 truncate_steps = True #erase step changes if no water savings is acheived
 force = False #force changes
 file_flag = ""
@@ -413,7 +413,6 @@ if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
 if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
 if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
-if not design_only: file_flag = file_flag + " EXPANDED_DCM_OPTIONS"
 if force: file_flag = file_flag + " FORCED_CHANGES"
 
 # read data from original Master Project planning workbook
@@ -426,9 +425,10 @@ dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 factors = build_factor_tables()
 dca_info = read_dca_info()
 dca_list = dca_info.index.tolist()
-dcm_list = design_dcms['MP_id'].tolist()
+dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
+        ['(DWM)', 'improved', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
-                in enumerate(design_dcms['Type']) if i=='Habitat DCM']
+        in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
 guild_list = [x for x in factors['design'].columns if x != 'water']
 factor_keys = [x for x in factors['design'].columns]
 
@@ -454,14 +454,6 @@ dcm_constraints, step_constraints = initialize_constraints()
 if not unconstrained_case:
     dcm_constraints, step_constraints = \
             update_constraints(dcm_constraints, step_constraints)
-
-# only allow changes to waterless or design habitat DCMs
-if design_only:
-    allowed_list = hab_list + waterless_dict.keys()
-    for dca in dca_info.index:
-        allowed = allowed_list + [dca_info.loc[dca]['step0']]
-        new = [1 if x in allowed else 0 for x in dcm_list]
-        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
 
 if freeze_farm:
     farm_dcas = dca_info.loc[[x == 'Veg 08' for x in dca_info['step0']]]
@@ -500,14 +492,16 @@ new_state = lake_state["step0"].copy()
 new_percent = total["step0"]/total['base']
 new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
-tracking = pd.DataFrame.from_dict({'dca': [], 'mp': [], 'step': []})
+percent_dict = lambda prcnt: {x: y for x, y in zip(prcnt.keys(), prcnt.values)}
+tracking = pd.DataFrame({'dca': 'x', 'dcm': 'x', 'step': 0}, index=[0]).join(\
+        pd.DataFrame(percent_dict(new_percent), index=[0]))
 
 recent_water_step = 1.0
+change_counter = 1
 for step in range(1, 6):
     # intialize step area limits
     trans_area = {x: 0 for x in trans_limits.keys()}
     retry = True
-    change_counter = 0
     force_counter = 0
     if force:
         step_forces = forces.loc[forces['step']==step, :]
@@ -592,8 +586,9 @@ for step in range(1, 6):
             new_state = test_case.copy()
             new_total = test_total.copy()
             new_percent = test_percent.copy()
-            tracking = tracking.append({'dca': best_change[3], \
-                    'mp': best_change[7], 'step': step}, ignore_index=True)
+            tracking = tracking.append(pd.DataFrame({'dca': best_change[3], \
+                    'dcm': best_change[7], 'step': step}, index=[change_counter]).join(\
+                       pd.DataFrame(percent_dict(new_percent), index=[change_counter])))
             change_counter += 1
             force_counter += 1
             break
@@ -611,19 +606,19 @@ print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
 tracking = tracking.set_index('dca', drop=True)
-assignment_output = pd.DataFrame.from_dict(\
-        {"step"+str(x): assignments["step" + str(x)].iloc[:, 0].tolist() \
-        for x in range(0, 6)})
-assignment_output.index = assignments['base'].index
-assignment_output = assignment_output.join(tracking)
-assignment_output['mp'] = [x if str(y) == 'nan' else y for x, y in \
-        zip(assignment_output['step5'], assignment_output['mp'])]
+tracking['mp'] = tracking['dcm']
+assignment_output = lake_state['base'][['area_ac', 'area_sqmi']]
+assignment_output = assignment_output.join(tracking.drop('x'))
+assignment_output['base'] = assignment_output.index.get_level_values('dcm')
+for i in range(0,6):
+    stp = "step" + str(i)
+    assignment_output[stp] = lake_state[stp].index.get_level_values('dcm')
+assignment_output['mp'] = [x if str(y)=='nan' else y for x, y in \
+        zip(assignment_output['step0'], assignment_output['mp'])]
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
-assignment_output.to_csv(output_csv)
 
-summary_df = assignment_output.join(dca_info[['area_sqmi', 'area_ac']])
-summary_melt = pd.melt(summary_df, id_vars=['area_sqmi'], \
+summary_melt = pd.melt(assignment_output, id_vars=['area_sqmi'], \
         value_vars=['step'+str(i) for i in range(0, 6)], \
         var_name='step', value_name='dcm')
 summary_melt.replace(dcm_dict, inplace=True)
@@ -636,7 +631,7 @@ summary.drop('None', inplace=True)
 # write results into output workbook
 ws = wb['MP_new']
 # write DCA/DCM assignments 
-for i in range(0, len(lake_state), 1):
+for i in range(0, len(assignment_output), 1):
     offset = 22
     ws.cell(row=i+offset, column=8).value = assignment_output['mp'][i]
     ws.cell(row=i+offset, column=9).value = assignment_output['step'][i]
@@ -659,7 +654,8 @@ writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
 writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 
-# record constraints used
+ws = wb['Change Tracking']
+for r in dataframe_to_rows(tracking, index=True, header=True):
+    ws.append(r)
 
 writer.save()
-
