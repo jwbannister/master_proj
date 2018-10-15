@@ -198,7 +198,7 @@ def printout(flag):
     return readout
 
 def check_exceed_area(test_totals, new_totals, limits, guild_available, \
-        meadow_limits=True):
+        meadow_limits=True, bw_limit=True):
     exceed_flag = {x: 'ok' for x in guild_list if x != 'water'}
     for x in exceed_flag.keys():
         if (test_totals[x] + (guild_available[x] * 640)) / total['base'][x] < limits[x]:
@@ -211,6 +211,11 @@ def check_exceed_area(test_totals, new_totals, limits, guild_available, \
             exceed_flag['md'] = 'under'
         if test_totals['md'] > new_totals['md'] :
             exceed_flag['md'] = 'over'
+    # no design habitats to create more breeding waterfowl areas, so don't allow
+    # breeding waterfowl to fall below target
+    if not unconstrained_case and bw_limit:
+        if test_totals['bw'] / total['base']['bw'] < limits['bw']:
+            exceed_flag['bw'] = 'under'
     return exceed_flag
 
 def set_constraint(axis, idx, new_constraint, constraint_df):
@@ -265,8 +270,8 @@ def initialize_constraints():
 
 def update_constraints(dcm_constraints, step_constraints):
     # set hard-wired constraints
-    # Constraint to only remove "Meadow" habitat is wired into
-    # check_exceed_area function
+    # Constraint to only remove "Meadow" habitat and to limit BW re-build is 
+    # wired into check_exceed_area function
     # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'ENV', new, dcm_constraints)
@@ -493,7 +498,8 @@ new_percent = total["step0"]/total['base']
 new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
 percent_dict = lambda prcnt: {x: y for x, y in zip(prcnt.keys(), prcnt.values)}
-tracking = pd.DataFrame({'dca': 'x', 'dcm': 'x', 'step': 0}, index=[0]).join(\
+tracking = pd.DataFrame({'dca': 'x', 'from': 'x', 'to': 'x', 'step': 0}, \
+        index=[0]).join(\
         pd.DataFrame(percent_dict(new_percent), index=[0]))
 
 recent_water_step = 1.0
@@ -587,7 +593,8 @@ for step in range(1, 6):
             new_percent = test_percent.copy()
             priority = prioritize(new_percent, hab_limits)
             tracking = tracking.append(pd.DataFrame({'dca': best_change[3], \
-                    'dcm': best_change[7], 'step': step}, index=[change_counter]).join(\
+                    'from': lake_state['step0'].loc[best_change[3]].index[0], \
+                    'to': best_change[7], 'step': step}, index=[change_counter]).join(\
                        pd.DataFrame(percent_dict(new_percent), index=[change_counter])))
             change_counter += 1
             force_counter += 1
@@ -605,16 +612,17 @@ total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
 print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
-tracking = tracking.set_index('dca', drop=True)
-tracking['mp'] = tracking['dcm']
+# tracking = tracking.set_index('dca', drop=True)
+tracking = tracking[['dca','from', 'to', 'step', 'bw', 'mw', 'pl', 'ms', 'md', \
+        'water']]
 assignment_output = lake_state['base'][['area_ac', 'area_sqmi']]
-assignment_output = assignment_output.join(tracking.drop('x'))
+assignment_output = assignment_output.join(tracking.set_index('dca').drop('x'))
 assignment_output['base'] = assignment_output.index.get_level_values('dcm')
 for i in range(0,6):
     stp = "step" + str(i)
     assignment_output[stp] = lake_state[stp].index.get_level_values('dcm')
 assignment_output['mp'] = [x if str(y)=='nan' else y for x, y in \
-        zip(assignment_output['step0'], assignment_output['mp'])]
+        zip(assignment_output['step0'], assignment_output['step5'])]
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
 
@@ -648,17 +656,15 @@ for i in range(0, len(summary), 1):
     ws.cell(row=i+5, column=1).value = summary.index.tolist()[i]
     for j in range(0, 6):
         ws.cell(row=i+5, column=j+2).value = summary.iloc[i, j].round(3)
-wb.save(output_excel)
-book = load_workbook(filename=output_excel)
-writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
-writer.book = book
-writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
-
 ws = wb['Change Tracking']
 row = 1
 for r in dataframe_to_rows(tracking, index=True, header=True):
     for i in range(0, len(r)):
         ws.cell(row=row, column=i+1).value = r[i]
     row += 1
-
+wb.save(output_excel)
+book = load_workbook(filename=output_excel)
+writer = pd.ExcelWriter(output_excel, engine = 'openpyxl')
+writer.book = book
+writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 writer.save()
