@@ -422,13 +422,13 @@ design_dcms = mp_file.parse(sheet_name="Design HV & WD", header=2, \
         usecols="A,C").dropna(how='any')
 dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 
-factors = build_factor_tables()
 dca_info = read_dca_info()
 dca_list = dca_info.index.tolist()
 dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
         ['(DWM)', 'improved', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
         in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
+factors = build_factor_tables()
 guild_list = [x for x in factors['design'].columns if x != 'water']
 factor_keys = [x for x in factors['design'].columns]
 
@@ -582,10 +582,10 @@ for step in range(1, 6):
                 continue
             trans_area[best_change[4]] += dca_info.loc[best_change[3]]['area_sqmi']
             constraints.loc[best_change[3]] = np.array(best_change[2])
-            priority = prioritize(new_percent, hab_limits)
             new_state = test_case.copy()
             new_total = test_total.copy()
             new_percent = test_percent.copy()
+            priority = prioritize(new_percent, hab_limits)
             tracking = tracking.append(pd.DataFrame({'dca': best_change[3], \
                     'dcm': best_change[7], 'step': step}, index=[change_counter]).join(\
                        pd.DataFrame(percent_dict(new_percent), index=[change_counter])))
@@ -655,7 +655,10 @@ writer.book = book
 writer.sheets = dict((ws.title, ws) for ws in book.worksheets)
 
 ws = wb['Change Tracking']
+row = 1
 for r in dataframe_to_rows(tracking, index=True, header=True):
-    ws.append(r)
+    for i in range(0, len(r)):
+        ws.cell(row=row, column=i+1).value = r[i]
+    row += 1
 
 writer.save()
