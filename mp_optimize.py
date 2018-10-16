@@ -131,7 +131,7 @@ def evaluate_dca_change(dca, dcm, state, factors, \
         smart = new_factors['water'] - current_factors['water'] < 0
         benefit1 = current_factors['water'] - new_factors['water']
         try:
-            benefit2 = waterless_dict[dcm_name]
+            benefit2 = waterless_dict[dcm]
         except:
             benefit2 = -6
     else:
@@ -275,6 +275,10 @@ def update_constraints(dcm_constraints, step_constraints):
     # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'ENV', new, dcm_constraints)
+    # freeze Channel areas
+    new = [1 if 'ENV' else 0 for x in dcm_list]
+    for dca in [x for x in dca_list if 'Channel' in x]:
+        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
     # no additional sand fences besides existing T1A1
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'Sand Fences', new, dcm_constraints)
