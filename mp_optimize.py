@@ -276,24 +276,12 @@ def update_constraints(dcm_constraints, step_constraints):
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'ENV', new, dcm_constraints)
     # freeze Channel areas
-    new = [1 if 'ENV' else 0 for x in dcm_list]
+    new = [1 if x=='ENV' else 0 for x in dcm_list]
     for dca in [x for x in dca_list if 'Channel' in x]:
         dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
     # no additional sand fences besides existing T1A1
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'Sand Fences', new, dcm_constraints)
-    # weird, specific cases are not allowed to be newly assigned
-    specific_dcms = [x for x in dcm_list if '(DWM)' in x or '(improved)' in x]
-    specific_dcas = dca_info.loc[[x for x in dca_list \
-            if dca_info.loc[x]['step0'] in specific_dcms]].index.tolist()
-    for dca in dca_info.index:
-        if dca in specific_dcas:
-            new = [1 if x == dca_info.loc[dca]['step0'] \
-                    or x not in specific_dcms else 0 for x in dcm_list]
-            dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
-        else:
-            new = [0 if x in specific_dcms else 1 for x in dcm_list]
-            dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
     waterless = dca_info.loc[[x in waterless_dict.keys() + \
             ['Brine (DWM)', 'Sand Fences'] \
