@@ -292,6 +292,13 @@ def update_constraints(dcm_constraints, step_constraints):
     # all DCAs under dust control, no new "None" DCMs allowed
     new = [0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'None', new, dcm_constraints)
+    # no new DWM areas allowed
+    dwm_list = [x for x in dcm_list if 'DWM' in x]
+    dwm_dcas = [x for x, y in zip(dca_info.index.tolist(), \
+            dca_info['step0']) if 'DWM' in y]
+    for dcm in dwm_list:
+        new = [1 if x in dwm_dcas else 0 for x in dca_list]
+        dcm_constraints = set_constraint(0, dcm, new, dcm_constraints)
 
     # read in and implement Ops constraints from LAUNCHPAD
     constraints_input = mp_file.parse(sheet_name="Constraints Input", header=7, \
@@ -400,7 +407,7 @@ def initialize_files():
 # set algorithm options and filename flags
 efficient_steps = True #stop step if water savings plateaus
 unconstrained_case = False #remove all constraints
-freeze_farm = True #keep "farm" managed veg as is
+freeze_farm = False #keep "farm" managed veg as is
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
 truncate_steps = True #erase step changes if no water savings is acheived
@@ -454,9 +461,9 @@ if not unconstrained_case:
 
 if freeze_farm:
     farm_dcas = dca_info.loc[[x == 'Veg 08' for x in dca_info['step0']]]
+    new = [0 for x in range(1, 6)]
     for dca in farm_dcas.index:
-        new = [1 if x == 'Veg 08' else 0 for x in dcm_list]
-        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
+        step_constraints = set_constraint(1, dca, new, step_constraints)
 
 if force:
     forces = mp_file.parse(sheet_name="MP Analysis Input", header=0, skiprows=1, \
@@ -470,10 +477,16 @@ if force:
 
 lake_state_pre_water_factor = {x:build_past_status(x) for x in ['base', 'step0']}
 if factor_water:
+    base_dcms =  set(lake_state_pre_water_factor['base'].index.\
+            get_level_values('dcm').tolist())
     calc_base_water = lake_state_pre_water_factor['base']['water_af/y'].sum()
     water_adjust = preset_base_water/calc_base_water
-    for j in factors.keys():
-        factors[j]['water'] = factors[j]['water'] * water_adjust
+    factors['design']['water'] = [y * water_adjust if x in base_dcms else y \
+            for x, y in zip(factors['design'].index.tolist(), \
+            factors['design']['water'])]
+    factors['asbuilt']['water'] = [y * water_adjust if x in base_dcms else y \
+            for x, y in zip(factors['asbuilt'].index.get_level_values('dcm').tolist(), \
+            factors['asbuilt']['water'])]
 lake_state = {x:build_past_status(x) for x in ['base', 'step0']}
 
 total = {}
@@ -618,15 +631,26 @@ assignment_output['mp'] = [x if str(y)=='nan' else y for x, y in \
 assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
 
-summary_melt = pd.melt(assignment_output, id_vars=['area_sqmi'], \
-        value_vars=['step'+str(i) for i in range(0, 6)], \
-        var_name='step', value_name='dcm')
-summary_melt.replace(dcm_dict, inplace=True)
-summary = summary_melt.groupby(['dcm', 'step'])['area_sqmi'].agg('sum').unstack()
+area_sum = tracking.join(dca_info, on='dca')[['to', 'step', 'area_sqmi']]
+area_sum.replace(dcm_dict, inplace=True)
+area_sum = area_sum[1:]
+area_sum = area_sum.groupby(['to', 'step']).sum()
+
+mi = pd.MultiIndex.from_product([set(dcm_dict), range(1, 6)], \
+        names=['to', 'step'])
+summary = pd.DataFrame(index=mi)
+summary = summary.join(area_sum)
+summary.fillna(0, inplace=True)
+summary = summary.unstack('step')
 tot = summary.sum().rename('total')
 summary = summary.append(tot)
-summary.fillna(0, inplace=True)
 summary.drop('None', inplace=True)
+
+#summary_melt = pd.melt(assignment_output, id_vars=['area_sqmi'], \
+#        value_vars=['step'+str(i) for i in range(0, 6)], \
+#        var_name='step', value_name='dcm')
+#summary_melt.replace(dcm_dict, inplace=True)
+#summary = summary_melt.groupby(['dcm', 'step'])['area_sqmi'].agg('sum').unstack()
 
 # write results into output workbook
 ws = wb['MP_new']
@@ -645,9 +669,9 @@ for j in ['base', 'step0', 'step1', 'step2', 'step3', 'step4', 'step5']:
 # write area summary tables
 ws = wb['Area Summary']
 for i in range(0, len(summary), 1):
-    ws.cell(row=i+5, column=1).value = summary.index.tolist()[i]
-    for j in range(0, 6):
-        ws.cell(row=i+5, column=j+2).value = summary.iloc[i, j].round(3)
+    ws.cell(row=i+5, column=1).value = summary.index.get_level_values('to').tolist()[i]
+    for j in range(1, 6):
+        ws.cell(row=i+5, column=j+2).value = summary.iloc[i, j-1].round(3)
 ws = wb['Change Tracking']
 row = 1
 for r in dataframe_to_rows(tracking, index=True, header=True):

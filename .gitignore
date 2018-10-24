@@ -4,6 +4,7 @@ gis/*
 output/*
 backup/*
 misc_info/*
+maps/*
 comments_input/*
 *.swp
 .DS_Store
