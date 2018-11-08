@@ -67,22 +67,29 @@ def patch_worksheet():
     worksheet.Worksheet.merge_cells = merge_cells
 patch_worksheet()
 
-def build_factor_tables():
+def build_factor_tables(water_adjust=1):
     design = mp_file.parse(sheet_name="Design HV & WD", header=2, \
             usecols="A,D,E,F,G,H,I", \
             names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[:len(dcm_list)]
     design.dropna(how='all', inplace=True)
     design.set_index('dcm', inplace=True)
+    design['water'] = design['water'] * water_adjust
     # build up custom habitat and water factor tables
     asbuilt = mp_file.parse(sheet_name="As-Built HV & WD", header=0, \
             usecols="A,B,C,D,E,F,G,H", \
             names=["dca", "dcm", "bw", "mw", "pl", "ms", "md", "water"])
     asbuilt.dropna(how='all', inplace=True)
+    design_water = [(dca, dcm) for dca, dcm, water in \
+            zip(asbuilt['dca'], asbuilt['dcm'], asbuilt['water']) \
+            if water == ' - ']
+    asbuilt_water = [(dca, dcm) for dca, dcm, water in \
+            zip(asbuilt['dca'], asbuilt['dcm'], asbuilt['water']) \
+            if water != ' - ']
     asbuilt['water'] = [design.loc[d]['water'] if w == ' - ' \
             else w for d, w in zip(asbuilt['dcm'], asbuilt['water'])]
     asbuilt.set_index(['dca', 'dcm'], inplace=True)
     factors = {'asbuilt':asbuilt.copy(), 'design':design.copy()}
-    return factors
+    return factors, design_water, asbuilt_water
 
 def read_dca_info():
     dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
@@ -407,7 +414,7 @@ def initialize_files():
 # set algorithm options and filename flags
 efficient_steps = True #stop step if water savings plateaus
 unconstrained_case = False #remove all constraints
-freeze_farm = False #keep "farm" managed veg as is
+freeze_farm = True #keep "farm" managed veg as is
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
 truncate_steps = True #erase step changes if no water savings is acheived
@@ -432,7 +439,7 @@ dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
         ['(DWM)', 'improved', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
         in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
-factors = build_factor_tables()
+factors, design_water, asbuilt_water = build_factor_tables()
 guild_list = [x for x in factors['design'].columns if x != 'water']
 factor_keys = [x for x in factors['design'].columns]
 
@@ -477,16 +484,18 @@ if force:
 
 lake_state_pre_water_factor = {x:build_past_status(x) for x in ['base', 'step0']}
 if factor_water:
-    base_dcms =  set(lake_state_pre_water_factor['base'].index.\
-            get_level_values('dcm').tolist())
     calc_base_water = lake_state_pre_water_factor['base']['water_af/y'].sum()
-    water_adjust = preset_base_water/calc_base_water
-    factors['design']['water'] = [y * water_adjust if x in base_dcms else y \
-            for x, y in zip(factors['design'].index.tolist(), \
-            factors['design']['water'])]
-    factors['asbuilt']['water'] = [y * water_adjust if x in base_dcms else y \
-            for x, y in zip(factors['asbuilt'].index.get_level_values('dcm').tolist(), \
-            factors['asbuilt']['water'])]
+    base_asbuilt = [x for x in asbuilt_water \
+            if x in lake_state_pre_water_factor['base'].index.get_values().tolist()]
+    base_design = [x for x in \
+            lake_state_pre_water_factor['base'].index.get_values().tolist() \
+            if not (x in asbuilt_water)]
+    asbuilt_water_dcas = lake_state_pre_water_factor['base'].loc[base_asbuilt, :]
+    asbuilt_water_calc = asbuilt_water_dcas['water_af/y'].sum()
+    design_water_dcas = lake_state_pre_water_factor['base'].loc[base_design, :]
+    design_water_calc = design_water_dcas['water_af/y'].sum()
+    water_adjust = (preset_base_water - asbuilt_water_calc)/design_water_calc
+    factors, design_water, asbuilt_water = build_factor_tables(water_adjust)
 lake_state = {x:build_past_status(x) for x in ['base', 'step0']}
 
 total = {}
