@@ -79,17 +79,14 @@ def build_factor_tables(water_adjust=1):
             usecols="A,B,C,D,E,F,G,H", \
             names=["dca", "dcm", "bw", "mw", "pl", "ms", "md", "water"])
     asbuilt.dropna(how='all', inplace=True)
-    design_water = [(dca, dcm) for dca, dcm, water in \
-            zip(asbuilt['dca'], asbuilt['dcm'], asbuilt['water']) \
-            if water == ' - ']
-    asbuilt_water = [(dca, dcm) for dca, dcm, water in \
+    asbuilt_water_ind = [(dca, dcm) for dca, dcm, water in \
             zip(asbuilt['dca'], asbuilt['dcm'], asbuilt['water']) \
             if water != ' - ']
     asbuilt['water'] = [design.loc[d]['water'] if w == ' - ' \
             else w for d, w in zip(asbuilt['dcm'], asbuilt['water'])]
     asbuilt.set_index(['dca', 'dcm'], inplace=True)
     factors = {'asbuilt':asbuilt.copy(), 'design':design.copy()}
-    return factors, design_water, asbuilt_water
+    return factors, asbuilt_water_ind
 
 def read_dca_info():
     dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
@@ -439,7 +436,7 @@ dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
         ['(DWM)', 'improved', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
         in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
-factors, design_water, asbuilt_water = build_factor_tables()
+factors, asbuilt_water_ind = build_factor_tables()
 guild_list = [x for x in factors['design'].columns if x != 'water']
 factor_keys = [x for x in factors['design'].columns]
 
@@ -485,17 +482,17 @@ if force:
 lake_state_pre_water_factor = {x:build_past_status(x) for x in ['base', 'step0']}
 if factor_water:
     calc_base_water = lake_state_pre_water_factor['base']['water_af/y'].sum()
-    base_asbuilt = [x for x in asbuilt_water \
+    base_asbuilt = [x for x in asbuilt_water_ind \
             if x in lake_state_pre_water_factor['base'].index.get_values().tolist()]
     base_design = [x for x in \
             lake_state_pre_water_factor['base'].index.get_values().tolist() \
-            if not (x in asbuilt_water)]
+            if not (x in asbuilt_water_ind)]
     asbuilt_water_dcas = lake_state_pre_water_factor['base'].loc[base_asbuilt, :]
     asbuilt_water_calc = asbuilt_water_dcas['water_af/y'].sum()
     design_water_dcas = lake_state_pre_water_factor['base'].loc[base_design, :]
     design_water_calc = design_water_dcas['water_af/y'].sum()
     water_adjust = (preset_base_water - asbuilt_water_calc)/design_water_calc
-    factors, design_water, asbuilt_water = build_factor_tables(water_adjust)
+    factors, garbage = build_factor_tables(water_adjust)
 lake_state = {x:build_past_status(x) for x in ['base', 'step0']}
 
 total = {}
@@ -512,7 +509,8 @@ new_percent = total["step0"]/total['base']
 new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
 percent_dict = lambda prcnt: {x: y for x, y in zip(prcnt.keys(), prcnt.values)}
-tracking = pd.DataFrame({'dca': 'x', 'from': 'x', 'to': 'x', 'step': 0}, \
+tracking = pd.DataFrame({'dca': 'x', 'from': 'x', 'to': 'x', 'step': 0, \
+        'step0_wd': 0, 'mp_wd': 0, 'water_change': 0}, \
         index=[0]).join(\
         pd.DataFrame(percent_dict(new_percent), index=[0]))
 
@@ -606,9 +604,15 @@ for step in range(1, 6):
             new_total = test_total.copy()
             new_percent = test_percent.copy()
             priority = prioritize(new_percent, hab_limits)
+            old_water_duty = lake_state['step0'].loc[best_change[3]]['water'][0]
+            new_water_duty = new_state.loc[best_change[3]]['water'][0]
             tracking = tracking.append(pd.DataFrame({'dca': best_change[3], \
                     'from': lake_state['step0'].loc[best_change[3]].index[0], \
-                    'to': best_change[7], 'step': step}, index=[change_counter]).join(\
+                    'to': best_change[7], 'step': step, \
+                    'step0_wd_f/y': old_water_duty, 'mp_wd_f/y': new_water_duty, \
+                    'water_change_af/y': (new_water_duty - old_water_duty) * \
+                    dca_info.loc[best_change[3]]['area_ac']}, \
+                    index=[change_counter]).join(\
                        pd.DataFrame(percent_dict(new_percent), index=[change_counter])))
             change_counter += 1
             force_counter += 1
@@ -628,7 +632,7 @@ print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
 # tracking = tracking.set_index('dca', drop=True)
 tracking = tracking[['dca','from', 'to', 'step', 'bw', 'mw', 'pl', 'ms', 'md', \
-        'water']]
+        'water', 'step0_wd_f/y', 'mp_wd_f/y', 'water_change_af/y']]
 assignment_output = lake_state['base'][['area_ac', 'area_sqmi']]
 assignment_output = assignment_output.join(tracking.set_index('dca').drop('x'))
 assignment_output['base'] = assignment_output.index.get_level_values('dcm')
