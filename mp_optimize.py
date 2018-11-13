@@ -296,6 +296,11 @@ def update_constraints(dcm_constraints, step_constraints):
     # all DCAs under dust control, no new "None" DCMs allowed
     new = [0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'None', new, dcm_constraints)
+    # TEST CASE - no new waterless allowed
+#    new = [0 for x in dca_list]
+#    dcm_constraints = set_constraint(0, 'Brine', new, dcm_constraints)
+#    dcm_constraints = set_constraint(0, 'Tillage', new, dcm_constraints)
+#    dcm_constraints = set_constraint(0, 'Gravel', new, dcm_constraints)
     # no new DWM areas allowed
     dwm_list = [x for x in dcm_list if 'DWM' in x]
     dwm_dcas = [x for x, y in zip(dca_info.index.tolist(), \
@@ -621,6 +626,8 @@ for step in range(1, 6):
             and truncate_steps:
         lake_state["step" + str(step)] = lake_state["step" + str(step-1)]
         total["step" + str(step)] = total["step" + str(step-1)]
+        for dca in tracking.loc[tracking['step']==step, :]['dca']:
+            constraints.loc[dca] = dcm_constraints.loc[dca]
         tracking = tracking.loc[tracking['step'] != step]
     else:
         lake_state["step" + str(step)] = new_state.copy()
