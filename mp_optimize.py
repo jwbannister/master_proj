@@ -287,8 +287,7 @@ def update_constraints(dcm_constraints, step_constraints):
     new = [1 if x == 'T1A-1' else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'Sand Fences', new, dcm_constraints)
     # all DCAs currently under waterless DCM should remain unchanged
-    waterless = dca_info.loc[[x in waterless_dict.keys() + \
-            ['Brine (DWM)', 'Sand Fences'] \
+    waterless = dca_info.loc[[x in waterless_dict.keys() + ['Sand Fences'] \
             for x in dca_info['step0']]]
     for dca in waterless.index:
         new = [1 if x == waterless.loc[dca]['step0'] else 0 for x in dcm_list]
@@ -296,11 +295,6 @@ def update_constraints(dcm_constraints, step_constraints):
     # all DCAs under dust control, no new "None" DCMs allowed
     new = [0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'None', new, dcm_constraints)
-    # TEST CASE - no new waterless allowed
-#    new = [0 for x in dca_list]
-#    dcm_constraints = set_constraint(0, 'Brine', new, dcm_constraints)
-#    dcm_constraints = set_constraint(0, 'Tillage', new, dcm_constraints)
-#    dcm_constraints = set_constraint(0, 'Gravel', new, dcm_constraints)
     # no new DWM areas allowed
     dwm_list = [x for x in dcm_list if 'DWM' in x]
     dwm_dcas = [x for x, y in zip(dca_info.index.tolist(), \
@@ -348,6 +342,25 @@ def update_constraints(dcm_constraints, step_constraints):
         phase_dcas = dca_info.loc[dca_info['phase'] == float(phase)].index
         for dca in phase_dcas:
             step_constraints = set_constraint(1, dca, new, step_constraints)
+
+    # disallow Brine in all areas, except those designated in Ops Brine map
+    # (Brine-allowed DCAs will be designated below from LAUNCHPAD
+    brine_map_dcas = [x for x in dcm_constraint_input.index \
+            if all(y in dcm_constraint_input.loc[x].tolist() for y in ['only', 'Brine'])]
+    new = [1 if x in brine_map_dcas else 0 for x in dca_list]
+    dcm_constraints = set_constraint(0, 'Brine', new, dcm_constraints)
+
+    # restrict DCA-specific habitat designs to only occur in those habitats
+    hab_designs = [x for x in dcm_list if 'design' in x]
+    for des in hab_designs:
+        new = [1 if x == des.replace(' design', '') else 0 for x in dca_list]
+        dcm_constraints = set_constraint(0, des, new, dcm_constraints)
+
+    heavy_water_users = [(x, y.replace(' (HW)', '')) for x, y in \
+            zip(dca_info.index, dca_info['step0']) if '(HW)' in y]
+    for pair in heavy_water_users:
+        dcm_constraints.at[pair] = 1
+
     return dcm_constraints, step_constraints
 
 def generate_possible_changes(smart_only=True, force_change=False):
@@ -438,7 +451,7 @@ dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 dca_info = read_dca_info()
 dca_list = dca_info.index.tolist()
 dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
-        ['(DWM)', 'improved', 'as-built']])]
+        ['(HW)', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
         in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
 factors, asbuilt_water_ind = build_factor_tables()
