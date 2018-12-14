@@ -90,7 +90,7 @@ def build_factor_tables(water_adjust=1):
 
 def read_dca_info():
     dca_info = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
-            usecols="A,B,C,D,E,G", \
+            usecols="A,B,C,D,E,F", \
             names=["dca", "area_ac", "area_sqmi", "phase", "base", "step0"])
     dca_info.set_index('dca', inplace=True)
     return dca_info
@@ -202,7 +202,7 @@ def printout(flag):
     return readout
 
 def check_exceed_area(test_totals, new_totals, limits, guild_available, \
-        meadow_limits=True, bw_limit=True):
+    meadow_limits=True, bw_limit=True):
     exceed_flag = {x: 'ok' for x in guild_list if x != 'water'}
     for x in exceed_flag.keys():
         if (test_totals[x] + (guild_available[x] * 640)) / total['base'][x] < limits[x]:
@@ -273,10 +273,10 @@ def initialize_constraints():
     return dcm_constraints, step_constraints
 
 def update_constraints(dcm_constraints, step_constraints):
-    # set hard-wired constraints
-    # Constraint to only remove "Meadow" habitat and to limit BW re-build is 
-    # wired into check_exceed_area function
-    # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
+# set hard-wired constraints
+# Constraint to only remove "Meadow" habitat and to limit BW re-build is 
+# wired into check_exceed_area function
+# nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'ENV', new, dcm_constraints)
     # freeze Channel areas
@@ -303,7 +303,7 @@ def update_constraints(dcm_constraints, step_constraints):
         new = [1 if x in dwm_dcas else 0 for x in dca_list]
         dcm_constraints = set_constraint(0, dcm, new, dcm_constraints)
 
-    # read in and implement Ops constraints from LAUNCHPAD
+# read in and implement Ops constraints from LAUNCHPAD
     constraints_input = mp_file.parse(sheet_name="Constraints Input", header=7, \
             usecols="A:J")
     constraints_input.set_index('dca', inplace=True)
@@ -428,6 +428,7 @@ def initialize_files():
 
 # set algorithm options and filename flags
 efficient_steps = True #stop step if water savings plateaus
+efficiency_limit = 0.8 #minimum acre-feet/year/acre required from a water saving change
 unconstrained_case = False #remove all constraints
 freeze_farm = True #keep "farm" managed veg as is
 factor_water = True #adjust water useage values so base water matches preset value
@@ -445,22 +446,22 @@ if force: file_flag = file_flag + " FORCED_CHANGES"
 mp_file, output_excel, output_csv, wb = initialize_files()
 
 design_dcms = mp_file.parse(sheet_name="Design HV & WD", header=2, \
-        usecols="A,C").dropna(how='any')
+    usecols="A,C").dropna(how='any')
 dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 
 dca_info = read_dca_info()
 dca_list = dca_info.index.tolist()
 dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
-        ['(HW)', 'as-built']])]
+    ['(HW)', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
-        in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
+    in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
 factors, asbuilt_water_ind = build_factor_tables()
 guild_list = [x for x in factors['design'].columns if x != 'water']
 factor_keys = [x for x in factors['design'].columns]
 
 # read and set preferences for waterless DCMs
 waterless_preference = mp_file.parse(sheet_name="MP Analysis Input", header=18, \
-        usecols="A").iloc[:, 0].tolist()
+    usecols="A").iloc[:, 0].tolist()
 waterless_dict = {x:-y for x, y in zip(waterless_preference, range(1, 6))}
 
 # generate list of "soft transition" DCMS
@@ -468,12 +469,12 @@ soft_idx = define_soft()
 
 # read limits and toggles
 trans_limit_input = mp_file.parse(sheet_name="MP Analysis Input", header=None, \
-        usecols="B").iloc[:, 0].tolist()[0:4]
+    usecols="B").iloc[:, 0].tolist()[0:4]
 trans_limits = {'hard': trans_limit_input[0], 'soft': trans_limit_input[1]}
 hab_limit_input = mp_file.parse(sheet_name="MP Analysis Input", \
-        usecols="B,C").iloc[5:10, 0:2]
+    usecols="B,C").iloc[5:10, 0:2]
 hab_limits = dict(zip(hab_limit_input.iloc[:, 1].tolist(), \
-        hab_limit_input.iloc[:, 0].tolist()))
+    hab_limit_input.iloc[:, 0].tolist()))
 
 dcm_constraints, step_constraints = initialize_constraints()
 
@@ -492,7 +493,7 @@ if force:
             usecols="J,K,L")
     forces.dropna(how='any', inplace=True)
     forces.set_index('dca', inplace=True)
-    # prevent forced DCAs from changing before they are forced
+# prevent forced DCAs from changing before they are forced
     for dca in forces.index:
         new = [1 if x == forces.loc[dca]['step'] else 0 for x in range(1, 6)]
         step_constraints = set_constraint(1, dca, new, step_constraints)
@@ -528,14 +529,14 @@ new_total = total["step0"].copy()
 priority = prioritize(new_percent, hab_limits)
 percent_dict = lambda prcnt: {x: y for x, y in zip(prcnt.keys(), prcnt.values)}
 tracking = pd.DataFrame({'dca': 'x', 'from': 'x', 'to': 'x', 'step': 0, \
-        'step0_wd': 0, 'mp_wd': 0, 'water_change': 0}, \
-        index=[0]).join(\
-        pd.DataFrame(percent_dict(new_percent), index=[0]))
+    'step0_wd': 0, 'mp_wd': 0, 'water_change': 0}, \
+    index=[0]).join(\
+    pd.DataFrame(percent_dict(new_percent), index=[0]))
 
 recent_water_step = 1.0
 change_counter = 1
 for step in range(1, 6):
-    # intialize step area limits
+# intialize step area limits
     trans_area = {x: 0 for x in trans_limits.keys()}
     retry = True
     force_counter = 0
@@ -583,7 +584,8 @@ for step in range(1, 6):
             test_total.index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
             test_percent = test_total/total['base']
             if not force_trigger and priority[1] == 'water' and efficient_steps and \
-                    recent_water_step - test_percent['water'] < 0.005:
+                    best_change[6]['water']/0.0015625/\
+                    dca_info.loc[best_change[3]]['area_ac'] > -efficiency_limit:
                 smart_cases = [x for x in smart_cases if \
                        x[6]['water'] < best_change[6]['water']]
                 output = "eliminating " + str(possible_changes - len(smart_cases)) + \
@@ -594,16 +596,16 @@ for step in range(1, 6):
                 continue
             if not force_trigger and trans_area[best_change[4]] + \
                 dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
-                smart_cases = [x for x in smart_cases if \
-                        x[4] != best_change[4] or \
-                        dca_info.loc[x[3]]['area_sqmi'] < \
-                        trans_limits[best_change[4]] - trans_area[best_change[4]]]
-                output = "eliminating " + str(possible_changes - len(smart_cases)) + \
-                        " of " + str(possible_changes) + " possible changes." + \
-                        " (" + best_change[4] + " transition limit exceeded)"
-                print output
-                retry = len(smart_cases) > 0
-                continue
+                    smart_cases = [x for x in smart_cases if \
+                            x[4] != best_change[4] or \
+                            dca_info.loc[x[3]]['area_sqmi'] < \
+                            trans_limits[best_change[4]] - trans_area[best_change[4]]]
+                    output = "eliminating " + str(possible_changes - len(smart_cases)) + \
+                            " of " + str(possible_changes) + " possible changes." + \
+                            " (" + best_change[4] + " transition limit exceeded)"
+                    print output
+                    retry = len(smart_cases) > 0
+                    continue
             if not force_trigger:
                 guild_available = get_guild_available(best_change, approach_factor=0.9)
                 smart_cases, hab, violation = \
@@ -690,8 +692,8 @@ ws = wb['MP_new']
 # write DCA/DCM assignments 
 for i in range(0, len(assignment_output), 1):
     offset = 22
-    ws.cell(row=i+offset, column=8).value = assignment_output['mp'][i]
-    ws.cell(row=i+offset, column=9).value = assignment_output['step'][i]
+    ws.cell(row=i+offset, column=7).value = assignment_output['mp'][i]
+    ws.cell(row=i+offset, column=8).value = assignment_output['step'][i]
 # write habitat areas and water use
 rw = 3
 col_ind = {'bw':2, 'mw':3, 'pl':4, 'ms':5, 'md':6, 'water':7}
