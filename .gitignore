@@ -11,3 +11,4 @@ pre-tool_calcs/*
 water_hab_comments/*
 *.swp
 .DS_Store
+*.code-workspace

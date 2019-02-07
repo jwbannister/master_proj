@@ -3,23 +3,23 @@ import pandas as pd
 import numpy as np
 import datetime
 import os
-import sys
 from openpyxl import worksheet
 from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-# this is a test comment
+
 class color:
-   PURPLE = '\033[95m'
-   CYAN = '\033[96m'
-   DARKCYAN = '\033[36m'
-   BLUE = '\033[94m'
-   GREEN = '\033[92m'
-   YELLOW = '\033[93m'
-   RED = '\033[91m'
-   BOLD = '\033[1m'
-   UNDERLINE = '\033[4m'
-   END = '\033[0m'
+    PURPLE = '\033[95m'
+    CYAN = '\033[96m'
+    DARKCYAN = '\033[36m'
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    END = '\033[0m'
+
 
 def patch_worksheet():
     """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
@@ -27,12 +27,14 @@ def patch_worksheet():
     Thank you to Sergey Pikhovkin for the fix
     """
 
-    def merge_cells(self, range_string=None, start_row=None, start_column=None, end_row=None, end_column=None):
+    def merge_cells(self, range_string=None, start_row=None, start_column=None, 
+            end_row=None, end_column=None):
         """ Set merge on a cell range.  Range is a cell range (e.g. A0:E1)
         This is monkeypatched to remove cell deletion bug
         https://bitbucket.org/openpyxl/openpyxl/issues/364/styling-merged-cells-isnt-working
         """
-        if not range_string and not all((start_row, start_column, end_row, end_column)):
+        if not range_string and not all((start_row, start_column, end_row,
+            end_column)):
             msg = "You have to provide a value either for 'coordinate' or for\
             'start_row', 'start_column', 'end_row' *and* 'end_column'"
             raise ValueError(msg)
@@ -100,7 +102,6 @@ def build_past_status(stp):
     state = dca_info[stp]
     stp_factors = get_factors(state)
     stp_status = stp_factors.join(dca_info[['area_ac', 'area_sqmi']], on='dca')
-    cols = [x + "_ac" if x != 'water' else x + "_af/y" for x in stp_factors.columns]
     for i in stp_factors.columns:
         col_name = i + "_ac" if i != 'water' else i + "_af/y"
         stp_status[col_name] = stp_factors[i] * stp_status['area_ac']
@@ -132,7 +133,7 @@ def evaluate_dca_change(dca, dcm, state, factors, \
         priority, waterless_dict):
     current_factors = state.loc[dca][factor_keys].squeeze()
     new_factors = factors['design'].loc[dcm]
-    if priority[1]=='water':
+    if priority[1] == 'water':
         smart = new_factors['water'] - current_factors['water'] < 0
         benefit1 = current_factors['water'] - new_factors['water']
         try:
@@ -168,7 +169,7 @@ def try_get_dcm(row):
 
 def get_assignments(case, dca_list, dcm_list):
     assignments = pd.DataFrame([try_get_dcm(row) \
-            for index, row in case.iterrows()], index=dca_list, columns=['dcm'])
+            for row in case.iterrows()], index=dca_list, columns=['dcm'])
     return assignments
 
 def printout(flag):
