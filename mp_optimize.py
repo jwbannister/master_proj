@@ -6,7 +6,7 @@ import os
 from openpyxl import worksheet
 from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
-
+import ipdb
 
 class color:
     PURPLE = '\033[95m'
@@ -19,7 +19,6 @@ class color:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
     END = '\033[0m'
-
 
 def patch_worksheet():
     """This monkeypatches Worksheet.merge_cells to remove cell deletion bug
@@ -149,28 +148,24 @@ def evaluate_dca_change(dca, dcm, state, factors, \
         benefit2 = p2_increase / water_increase
     return {'smart': smart, 'benefit1':benefit1, 'benefit2':benefit2}
 
-def prioritize(value_percents, hab_minimums):
-    hab_deficits = {x: value_percents[x] - hab_minimums[x] \
+def prioritize(value_percents, deficit, hab_minimums):
+    percent_deficits = {x: value_percents[x] - hab_minimums[x] \
             for x in value_percents.index.tolist() \
             if x != 'water'}
-    if any([x < 0 for x in hab_deficits.values()]):
-        sort_deficits = sorted(hab_deficits.values())
-        one = hab_deficits.values().index(sort_deficits[0])
-        two = hab_deficits.values().index(sort_deficits[1])
-        return {1: hab_deficits.keys()[one], 2: hab_deficits.keys()[two]}
+    clean_percents = {k: percent_deficits[k] for k in percent_deficits \
+            if not np.isnan(percent_deficits[k])}
+    rankable = [[k, -clean_percents[k], deficit[k]] for k in clean_percents.keys()]
+    ranked = sorted(rankable, key = lambda x: (x[1], x[2]), reverse=True)
+    if any([x < 0 for x in clean_percents.values()]):
+        return {1: ranked[0][0], 2: ranked[1][0]}
     else:
-        return {1: 'water', 2: value_percents[0:5].idxmin()}
+        return {1: 'water', 2: np.nan}
 
 def try_get_dcm(row):
     try:
         return dcm_list[row.tolist().index(1)]
     except:
         return dca_info.loc[row.name, 'step0']
-
-def get_assignments(case, dca_list, dcm_list):
-    assignments = pd.DataFrame([try_get_dcm(row) \
-            for row in case.iterrows()], index=dca_list, columns=['dcm'])
-    return assignments
 
 def printout(flag):
     readout = ""
@@ -279,6 +274,7 @@ def update_constraints(dcm_constraints, step_constraints):
 # Constraint to only remove "Meadow" habitat and to limit BW re-build is 
 # wired into check_exceed_area function
 # nothing allowed as Enhanced Natural Vegetation (ENV) except Channel Areas
+#    ipdb.set_trace()
     new = [1 if 'Channel' in x else 0 for x in dca_list]
     dcm_constraints = set_constraint(0, 'ENV', new, dcm_constraints)
     # freeze Channel areas
@@ -384,16 +380,16 @@ def generate_possible_changes(smart_only=True, force_change=False):
                 b = [0 for x in tmp]
                 b[dcm_ind] = 1
                 dcm = dcm_list[dcm_ind]
-                case_eval = evaluate_dca_change(dca, dcm, new_state, factors, priority, \
+                case_eval = evaluate_dca_change(dca, dcm, lake_state['step0'], factors, priority, \
                         waterless_dict)
                 if smart_only and not case_eval['smart']:
                     continue
                 else:
                     new_factors = factors['design'].loc[dcm]
-                    new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_factors[x] \
+                    new_areas = {x: dca_info.loc[dca]['area_ac'] * new_factors[x] \
                             for x in factor_keys}
-                    current_factors = new_state.loc[dca][factor_keys].squeeze()
-                    current_areas = {x: dca_info.loc[dca]['area_sqmi'] * \
+                    current_factors = lake_state['step0'].loc[dca][factor_keys].squeeze()
+                    current_areas = {x: dca_info.loc[dca]['area_ac'] * \
                             current_factors[x] for x in factor_keys}
                     guild_changes = {x: new_areas[x] - current_areas[x] \
                             for x in factor_keys}
@@ -417,43 +413,39 @@ def check_guild_violations(smart_cases, best_change, meadow_limits=True):
             comp[violate_flag[hab]](x[6][hab], best_change[6][hab])]
     return filtered_cases, hab, violate_flag[hab]
 
-def initialize_files():
+def initialize_files(launchpad_file):
     file_path = os.path.realpath(os.getcwd()) + "/"
-    file_name = "MP LAUNCHPAD.xlsx"
+    file_name = launchpad_file
     mp_file = pd.ExcelFile(file_path + file_name)
     timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
     output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
-    output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
     # read in current state of workbook for future writing
     wb = load_workbook(filename = file_path + file_name)
-    return mp_file, output_excel, output_csv, wb
+    return mp_file, output_excel, wb
 
 # set algorithm options and filename flags
-efficient_steps = True #stop step if water savings plateaus
-efficiency_limit = 0.8 #minimum acre-feet/year/acre required from a water saving change
-unconstrained_case = False #remove all constraints
-freeze_farm = True #keep "farm" managed veg as is
-factor_water = True #adjust water useage values so base water matches preset value
+unconstrained_case = False # remove all constraints
+freeze_farm = True # keep "farm" managed veg as is
+factor_water = True # adjust water useage values so base water matches preset value
 preset_base_water = 73351
-truncate_steps = True #erase step changes if no water savings is acheived
-force = False #force changes
-file_flag = ""
+force = False # force changes
+prescription_only = True
+file_flag = " PROJECT-BASED"
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
-if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
 if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
 if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
 if force: file_flag = file_flag + " FORCED_CHANGES"
 
 # read data from original Master Project planning workbook
-mp_file, output_excel, output_csv, wb = initialize_files()
+mp_file, output_excel, wb = initialize_files("MP LAUNCHPAD PROJECT.xlsx")
 
 design_dcms = mp_file.parse(sheet_name="Design HV & WD", header=2, \
     usecols="A,C").dropna(how='any')
-dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
+dcm_xwalk = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 
 dca_info = read_dca_info()
 dca_list = dca_info.index.tolist()
-dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
+dcm_list = [x for x in dcm_xwalk.index if not any([y in x for y in \
     ['(HW)', 'as-built']])]
 hab_list = [design_dcms['MP_id'][idx] for idx, i \
     in enumerate(design_dcms['Type'][:len(dcm_list)]) if i=='Habitat DCM']
@@ -490,6 +482,12 @@ if freeze_farm:
     for dca in farm_dcas.index:
         step_constraints = set_constraint(1, dca, new, step_constraints)
 
+if prescription_only:
+    # do not allow any DCMs besides waterless or design habitat
+    new = [1 if x in hab_list +  waterless_dict.keys() else 0 for x in dcm_list]
+    for dca in [x for x in dca_list]:
+        dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
+
 if force:
     forces = mp_file.parse(sheet_name="MP Analysis Input", header=0, skiprows=1, \
             usecols="J,K,L")
@@ -515,144 +513,139 @@ if factor_water:
     water_adjust = (preset_base_water - asbuilt_water_calc)/design_water_calc
     factors, garbage = build_factor_tables(water_adjust)
 lake_state = {x:build_past_status(x) for x in ['base', 'step0']}
+project_state = {x:pd.DataFrame().reindex_like(lake_state['step0']) for x in \
+        ['base', 'step0']}
 
-total = {}
-assignments = {}
-for stp in lake_state.keys():
-    total[stp] = lake_state[stp][['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', 'md_ac', \
+project_total = {}
+for stp in project_state.keys():
+    project_total[stp] = project_state[stp][['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', 'md_ac', \
             'water_af/y']].sum()
-    total[stp].index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
+    project_total[stp].index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
 
 # initialize variables before loop
 constraints = dcm_constraints.copy()
-new_state = lake_state["step0"].copy()
-new_percent = total["step0"]/total['base']
-new_total = total["step0"].copy()
-priority = prioritize(new_percent, hab_limits)
+new_state = project_state['step0'].copy()
+new_percent = project_total['step0']/project_total['base']
+new_total = project_total['step0'].copy()
 percent_dict = lambda prcnt: {x: y for x, y in zip(prcnt.keys(), prcnt.values)}
 tracking = pd.DataFrame({'dca': 'x', 'from': 'x', 'to': 'x', 'step': 0, \
     'step0_wd': 0, 'mp_wd': 0, 'water_change': 0}, \
-    index=[0]).join(\
-    pd.DataFrame(percent_dict(new_percent), index=[0]))
+    index=[0]).join(pd.DataFrame({'bw':'x', 'mw':'x', 'pl':'x', 'ms':'x', 'md':'x', \
+    'water':'x'}, index=[0]))
 
 recent_water_step = 1.0
 change_counter = 1
-for step in range(1, 6):
-# intialize step area limits
-    trans_area = {x: 0 for x in trans_limits.keys()}
-    retry = True
-    force_counter = 0
-    if force:
-        step_forces = forces.loc[forces['step']==step, :]
-    while retry:
-        if priority[1] == 'water':
-            recent_water_step = new_percent['water']
+step = 1
+trans_area = {x: 0 for x in trans_limits.keys()}
+retry = True
+force_counter = 0
+if force:
+    step_forces = forces.loc[forces['step']==step, :]
+ipdb.set_trace()
+while retry:
+    if change_counter == 1:
+        priority = {1: 'water', 2: np.nan}
+    if priority[1] == 'water':
+        recent_water_step = new_percent['water']
+    force_trigger = force and force_counter<len(step_forces)
+    if force_trigger:
+        smart_cases = generate_possible_changes(smart_only=False, force_change=True)
+        change_force = step_forces.iloc[force_counter]
+        best_change = [x for x in smart_cases if \
+                x[3] == change_force.name and \
+                dcm_list[x[2].index(1)] == change_force['force']][0]
+    else:
+        smart_cases = generate_possible_changes()
+        altered_dcas = [x[0] for x in new_state[new_state['bw'].notnull()].index.values]
+        smart_cases = [x for x in smart_cases if x[3] not in altered_dcas]
+    retry = len(smart_cases) > 0
+    while len(smart_cases) > 0:
+        if not force_trigger:
+            possible_changes = len(smart_cases)
+            best_change = smart_cases[0]
+            other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
+        test_ind = [ind for ind, x in enumerate(new_state.index) if \
+                x[0] == best_change[3]][0]
+        test_case = new_state.copy()
+        test_base_case = project_state['base'].copy()
+        test_step0_case = project_state['step0'].copy()
+        test_case.iloc[test_ind] = lake_state['step0'].iloc[test_ind]
+        test_base_case.iloc[test_ind] = lake_state['base'].iloc[test_ind]
+        test_step0_case.iloc[test_ind] = lake_state['step0'].iloc[test_ind]
+        for i in factor_keys:
+            test_case.loc[best_change[3], i] = \
+                    factors['design'].loc[best_change[7]][i]
+            col_name = i + "_ac" if i != 'water' else i + "_af/y"
+            test_case.loc[best_change[3], col_name] = \
+                    test_case.loc[best_change[3],'area_ac'].values[0] * \
+                    test_case.loc[best_change[3], i].values[0]
+        test_case.index = pd.MultiIndex.from_tuples(\
+               [(x[0], best_change[7]) if x[0]==best_change[3] else \
+               (x[0], x[1]) for x in test_case.index])
+        test_total = test_case[['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', \
+                'md_ac', 'water_af/y']].sum()
+        test_total.index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
+        test_base_total = test_base_case[['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', \
+                'md_ac', 'water_af/y']].sum()
+        test_base_total.index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
+        if not force_trigger and trans_area[best_change[4]] + \
+            dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
+                smart_cases = [x for x in smart_cases if \
+                        x[4] != best_change[4] or \
+                        dca_info.loc[x[3]]['area_sqmi'] < \
+                        trans_limits[best_change[4]] - trans_area[best_change[4]]]
+                output = "eliminating " + str(possible_changes - len(smart_cases)) + \
+                        " of " + str(possible_changes) + " possible changes." + \
+                        " (" + best_change[4] + " transition limit exceeded)"
+                print output
+                retry = len(smart_cases) > 0
+                continue
+#            if not force_trigger:
+#                guild_available = get_guild_available(best_change, approach_factor=0.9)
+#                smart_cases, hab, violation = \
+#                        check_guild_violations(smart_cases, best_change)
+#            if not force_trigger and len(smart_cases) < possible_changes:
+#                output = "eliminating " + \
+#                        str(possible_changes - len(smart_cases)) + " of " + \
+#                        str(possible_changes) + " possible changes." + " (" + \
+#                        hab + " pushed " + violation + " target area range)"
+#                print output
+#                retry = len(smart_cases) > 0
+#                continue
+        trans_area[best_change[4]] += dca_info.loc[best_change[3]]['area_sqmi']
+        constraints.loc[best_change[3]] = np.array(best_change[2])
+        new_state = test_case.copy()
+        project_state['base'] = test_base_case.copy()
+        project_state['step0'] = test_step0_case.copy()
+        new_total = test_total.copy()
+        new_percent = test_total/test_base_total
+        new_deficit = test_base_total - test_total
+        priority = prioritize(new_percent, new_deficit, hab_limits)
+        old_water_duty = project_state['step0'].loc[best_change[3]]['water'][0] 
+        new_water_duty = new_state.loc[best_change[3]]['water'][0]
+        tracking = tracking.append(pd.DataFrame({'dca': best_change[3], \
+                'from': lake_state['step0'].loc[best_change[3]].index[0], \
+                'to': best_change[7], 'step': step, \
+                'step0_wd_f/y': old_water_duty, 'mp_wd_f/y': new_water_duty, \
+                'water_change_af/y': (new_water_duty - old_water_duty) * \
+                dca_info.loc[best_change[3]]['area_ac']}, \
+                index=[change_counter]).join(\
+                   pd.DataFrame(percent_dict(new_percent), \
+                   index=[change_counter])), sort=False)
         output = "step " + str(step) + ", change " + str(change_counter) + \
                 ": hard/soft " + str(round(trans_area['hard'], 2)) + "/" + \
                 str(round(trans_area['soft'], 2))
         print output
         print printout('screen')
-        force_trigger = force and force_counter<len(step_forces)
-        if force_trigger:
-            smart_cases = generate_possible_changes(smart_only=False, force_change=True)
-            change_force = step_forces.iloc[force_counter]
-            best_change = [x for x in smart_cases if \
-                    x[3] == change_force.name and \
-                    dcm_list[x[2].index(1)] == change_force['force']][0]
-        else:
-            smart_cases = generate_possible_changes()
-        retry = len(smart_cases) > 0
-        while len(smart_cases) > 0:
-            if not force_trigger:
-                possible_changes = len(smart_cases)
-                best_change = smart_cases[0]
-                other_dca_smart_cases = [x for x in smart_cases if x[3] != best_change[3]]
-            test_case = new_state.copy()
-            test_ind = [ind for ind, x in enumerate(test_case.index) if \
-                    x[0] == best_change[3]][0]
-            tmp_ind = test_case.index.tolist()
-            tmp_ind[test_ind] = (best_change[3], best_change[7])
-            test_case.index = pd.MultiIndex.from_tuples(tmp_ind, \
-                    names=['dca', 'dcm'])
-            for i in factor_keys:
-                test_case.loc[best_change[3], i] = \
-                        factors['design'].loc[best_change[7]][i]
-                col_name = i + "_ac" if i != 'water' else i + "_af/y"
-                test_case.loc[best_change[3], col_name] = \
-                        test_case.loc[best_change[3],'area_ac'].values[0] * \
-                        test_case.loc[best_change[3], i].values[0]
-            test_total = test_case[['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', \
-                    'md_ac', 'water_af/y']].sum()
-            test_total.index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
-            test_percent = test_total/total['base']
-            if not force_trigger and priority[1] == 'water' and efficient_steps and \
-                    best_change[6]['water']/0.0015625/\
-                    dca_info.loc[best_change[3]]['area_ac'] > -efficiency_limit:
-                smart_cases = [x for x in smart_cases if \
-                       x[6]['water'] < best_change[6]['water']]
-                output = "eliminating " + str(possible_changes - len(smart_cases)) + \
-                        " of " + str(possible_changes) + " possible changes." + \
-                        " (inefficient water savings)"
-                print output
-                retry = len(smart_cases) > 0
-                continue
-            if not force_trigger and trans_area[best_change[4]] + \
-                dca_info.loc[best_change[3]]['area_sqmi'] > trans_limits[best_change[4]]:
-                    smart_cases = [x for x in smart_cases if \
-                            x[4] != best_change[4] or \
-                            dca_info.loc[x[3]]['area_sqmi'] < \
-                            trans_limits[best_change[4]] - trans_area[best_change[4]]]
-                    output = "eliminating " + str(possible_changes - len(smart_cases)) + \
-                            " of " + str(possible_changes) + " possible changes." + \
-                            " (" + best_change[4] + " transition limit exceeded)"
-                    print output
-                    retry = len(smart_cases) > 0
-                    continue
-            if not force_trigger:
-                guild_available = get_guild_available(best_change, approach_factor=0.9)
-                smart_cases, hab, violation = \
-                        check_guild_violations(smart_cases, best_change)
-            if not force_trigger and len(smart_cases) < possible_changes:
-                output = "eliminating " + \
-                        str(possible_changes - len(smart_cases)) + " of " + \
-                        str(possible_changes) + " possible changes." + " (" + \
-                        hab + " pushed " + violation + " target area range)"
-                print output
-                retry = len(smart_cases) > 0
-                continue
-            trans_area[best_change[4]] += dca_info.loc[best_change[3]]['area_sqmi']
-            constraints.loc[best_change[3]] = np.array(best_change[2])
-            new_state = test_case.copy()
-            new_total = test_total.copy()
-            new_percent = test_percent.copy()
-            priority = prioritize(new_percent, hab_limits)
-            old_water_duty = lake_state['step0'].loc[best_change[3]]['water'][0]
-            new_water_duty = new_state.loc[best_change[3]]['water'][0]
-            tracking = tracking.append(pd.DataFrame({'dca': best_change[3], \
-                    'from': lake_state['step0'].loc[best_change[3]].index[0], \
-                    'to': best_change[7], 'step': step, \
-                    'step0_wd_f/y': old_water_duty, 'mp_wd_f/y': new_water_duty, \
-                    'water_change_af/y': (new_water_duty - old_water_duty) * \
-                    dca_info.loc[best_change[3]]['area_ac']}, \
-                    index=[change_counter]).join(\
-                       pd.DataFrame(percent_dict(new_percent), index=[change_counter])))
-            change_counter += 1
-            force_counter += 1
-            break
-    if total["step" + str(step-1)]['water'] - new_total['water'] < 10 \
-            and truncate_steps:
-        lake_state["step" + str(step)] = lake_state["step" + str(step-1)]
-        total["step" + str(step)] = total["step" + str(step-1)]
-        for dca in tracking.loc[tracking['step']==step, :]['dca']:
-            constraints.loc[dca] = dcm_constraints.loc[dca]
-        tracking = tracking.loc[tracking['step'] != step]
-    else:
-        lake_state["step" + str(step)] = new_state.copy()
-        total["step" + str(step)] = new_total.copy()
-water_min = min([total[x]['water'] for x in total.keys()])
-total_water_savings = total['step0']['water'] - water_min
+        change_counter += 1
+        force_counter += 1
+else:
+    project_state["step" + str(step)] = new_state.copy()
+    total["step" + str(step)] = new_total.copy()
+#water_min = min([project_total[x]['water'] for x in project_total.keys()])
+#total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
-print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
+#print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
 
 # tracking = tracking.set_index('dca', drop=True)
 tracking = tracking[['dca','from', 'to', 'step', 'bw', 'mw', 'pl', 'ms', 'md', \
@@ -669,11 +662,11 @@ assignment_output['step'] = [0 if str(x) == 'nan' else x for x in \
         assignment_output['step']]
 
 area_sum = tracking.join(dca_info, on='dca')[['to', 'step', 'area_sqmi']]
-area_sum.replace(dcm_dict, inplace=True)
+area_sum.replace(dcm_xwalk, inplace=True)
 area_sum = area_sum[1:]
 area_sum = area_sum.groupby(['to', 'step']).sum()
 
-mi = pd.MultiIndex.from_product([set(dcm_dict), range(1, 6)], \
+mi = pd.MultiIndex.from_product([set(dcm_xwalk), range(1, 6)], \
         names=['to', 'step'])
 summary = pd.DataFrame(index=mi)
 summary = summary.join(area_sum)
@@ -686,7 +679,7 @@ summary.drop('None', inplace=True)
 #summary_melt = pd.melt(assignment_output, id_vars=['area_sqmi'], \
 #        value_vars=['step'+str(i) for i in range(0, 6)], \
 #        var_name='step', value_name='dcm')
-#summary_melt.replace(dcm_dict, inplace=True)
+#summary_melt.replace(dcm_xwalk, inplace=True)
 #summary = summary_melt.groupby(['dcm', 'step'])['area_sqmi'].agg('sum').unstack()
 
 # write results into output workbook
