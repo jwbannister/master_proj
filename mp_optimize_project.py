@@ -608,10 +608,9 @@ while retry:
         change_counter += 1
         force_counter += 1
         break
-#water_min = min([project_total[x]['water'] for x in project_total.keys()])
-#total_water_savings = total['step0']['water'] - water_min
 print 'Finished!'
-#print 'Total Water Savings = ' + str(total_water_savings) + ' acre-feet/year'
+print 'Total Water Savings = ' + str(round(-tracking['water_change_af/y'].sum())) \
+        + ' acre-feet/year'
 
 tracking = tracking[['dca','from', 'to', 'step', 'bw', 'mw', 'pl', 'ms', 'md', \
         'water', 'water_change_af/y']]

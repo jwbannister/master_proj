@@ -76,7 +76,7 @@ def build_factor_tables(water_adjust=1):
             names=["dcm", "bw", "mw", "pl", "ms", "md", "water"])[:len(dcm_list)]
     design.dropna(how='all', inplace=True)
     design.set_index('dcm', inplace=True)
-    design['water'] = design['water'] * water_adjust
+    design['water'][0:19] = design['water'][0:19] * water_adjust
     # build up custom habitat and water factor tables
     asbuilt = mp_file.parse(sheet_name="As-Built HV & WD", header=0, \
             usecols="A,B,C,D,E,F,G,H", \
