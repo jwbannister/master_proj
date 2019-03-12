@@ -224,14 +224,18 @@ def check_exceed_area(test_totals, new_totals, limits, guild_available, \
             exceed_flag['bw'] = 'under'
     return exceed_flag
 
-def set_constraint(axis, idx, new_constraint, constraint_df):
+def set_constraint(axis, idx, new_constraint, constraint_df, mini=True):
     new = new_constraint
+    if mini:
+        alter = lambda x, y: min(x, y)
+    else:
+        alter = lambda x, y: x
     if axis == 1:
         existing = constraint_df.loc[idx].tolist()
-        constraint_df.loc[idx] = [min(x, y) for x, y in zip(new, existing)]
+        constraint_df.loc[idx] = [alter(x, y) for x, y in zip(new, existing)]
     else:
         existing = constraint_df[idx]
-        constraint_df[idx] = [min(x, y) for x, y in zip(new, existing)]
+        constraint_df[idx] = [alter(x, y) for x, y in zip(new, existing)]
     return constraint_df
 
 def get_guild_available(best_change, approach_factor=0.9):
@@ -326,14 +330,6 @@ def update_constraints(dcm_constraints, step_constraints):
             allowed = dcm_constraint_input.loc[dca].dropna().tolist()[1:]
             new = [1 if x in allowed else 0 for x in dcm_list]
         dcm_constraints = set_constraint(1, dca, new, dcm_constraints)
-    for dca in step_constraint_input.index:
-        if step_constraint_input.loc[dca, 'type']=='not':
-            not_allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
-            new = [0 if x in not_allowed else 1 for x in range(1, 6)]
-        else:
-            allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
-            new = [1 if x in allowed else 0 for x in range(1, 6)]
-        step_constraints = set_constraint(1, dca, new, step_constraints)
     for phase in phase_constraint_input.index.tolist():
         if phase_constraint_input.loc[phase, 'type']=='not':
             not_allowed = phase_constraint_input.loc[phase].dropna().tolist()[1:]
@@ -344,6 +340,14 @@ def update_constraints(dcm_constraints, step_constraints):
         phase_dcas = dca_info.loc[dca_info['phase'] == float(phase)].index
         for dca in phase_dcas:
             step_constraints = set_constraint(1, dca, new, step_constraints)
+    for dca in step_constraint_input.index:
+        if step_constraint_input.loc[dca, 'type']=='not':
+            not_allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
+            new = [0 if x in not_allowed else 1 for x in range(1, 6)]
+        else:
+            allowed = step_constraint_input.loc[dca].dropna().tolist()[1:]
+            new = [1 if x in allowed else 0 for x in range(1, 6)]
+        step_constraints = set_constraint(1, dca, new, step_constraints, mini=False)
 
     # disallow Brine in all areas, except those designated in Ops Brine map
     # (Brine-allowed DCAs will be designated below from LAUNCHPAD
@@ -417,16 +421,15 @@ def check_guild_violations(smart_cases, best_change, meadow_limits=True):
             comp[violate_flag[hab]](x[6][hab], best_change[6][hab])]
     return filtered_cases, hab, violate_flag[hab]
 
-def initialize_files():
+def initialize_files(launchpad_file):
     file_path = os.path.realpath(os.getcwd()) + "/"
-    file_name = "MP LAUNCHPAD.xlsx"
+    file_name = launchpad_file
     mp_file = pd.ExcelFile(file_path + file_name)
     timestamp = datetime.datetime.now().strftime('%m_%d_%y %H_%M')
     output_excel = file_path + "output/" + "MP " + timestamp + file_flag + '.xlsx'
-    output_csv = file_path + "output/mp_steps " + timestamp + file_flag + '.csv'
     # read in current state of workbook for future writing
     wb = load_workbook(filename = file_path + file_name)
-    return mp_file, output_excel, output_csv, wb
+    return mp_file, output_excel, wb
 
 # set algorithm options and filename flags
 efficient_steps = True #stop step if water savings plateaus
@@ -445,7 +448,7 @@ if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
 if force: file_flag = file_flag + " FORCED_CHANGES"
 
 # read data from original Master Project planning workbook
-mp_file, output_excel, output_csv, wb = initialize_files()
+mp_file, output_excel, wb = initialize_files("MP LAUNCHPAD PROJECT.xlsx")
 
 design_dcms = mp_file.parse(sheet_name="Design HV & WD", header=2, \
     usecols="A,C").dropna(how='any')
