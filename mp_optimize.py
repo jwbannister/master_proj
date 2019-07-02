@@ -96,15 +96,24 @@ def read_dca_info():
             usecols="A,B,C,D,E,F", \
             names=["dca", "area_ac", "area_sqmi", "phase", "base", "step0"])
     dca_info.set_index('dca', inplace=True)
-    return dca_info
+    hab_adjust = mp_file.parse(sheet_name="MP_new", header=None, skiprows=21, \
+            usecols="A,K", \
+            names=["dca", "hab_adjust"])
+    hab_adjust.set_index('dca', inplace=True)
+    return dca_info, hab_adjust
 
 def build_past_status(stp):
     state = dca_info[stp]
     stp_factors = get_factors(state)
     stp_status = stp_factors.join(dca_info[['area_ac', 'area_sqmi']], on='dca')
+    stp_status = stp_status.join(hab_adjust)
     for i in stp_factors.columns:
         col_name = i + "_ac" if i != 'water' else i + "_af/y"
-        stp_status[col_name] = stp_factors[i] * stp_status['area_ac']
+        if i == 'water':
+            stp_status[col_name] = stp_factors[i] * stp_status['area_ac']
+        else:
+            stp_status[col_name] = stp_factors[i] * stp_status['area_ac'] * \
+                    stp_status['hab_adjust']
     return stp_status
 
 def get_factors(state):
@@ -394,11 +403,15 @@ def generate_possible_changes(smart_only=True, force_change=False):
                     continue
                 else:
                     new_factors = factors['design'].loc[dcm]
-                    new_areas = {x: dca_info.loc[dca]['area_sqmi'] * new_factors[x] \
-                            for x in factor_keys}
+                    new_areas = {x: (dca_info.loc[dca]['area_sqmi'] * new_factors[x] \
+                            if x == 'water' else \
+                            dca_info.loc[dca]['area_sqmi'] * new_factors[x] * \
+                            hab_adjust.loc[dca][0]) for x in factor_keys}
                     current_factors = new_state.loc[dca][factor_keys].squeeze()
-                    current_areas = {x: dca_info.loc[dca]['area_sqmi'] * \
-                            current_factors[x] for x in factor_keys}
+                    current_areas = {x: (dca_info.loc[dca]['area_sqmi'] * current_factors[x] \
+                            if x == 'water' else \
+                            dca_info.loc[dca]['area_sqmi'] * current_factors[x] * \
+                            hab_adjust.loc[dca][0]) for x in factor_keys}
                     guild_changes = {x: new_areas[x] - current_areas[x] \
                             for x in factor_keys}
                     change = (case_eval['benefit1'], case_eval['benefit2'], b, \
@@ -433,28 +446,38 @@ def initialize_files(launchpad_file):
 
 # set algorithm options and filename flags
 efficient_steps = True #stop step if water savings plateaus
-efficiency_limit = 0.8 #minimum acre-feet/year/acre required from a water saving change
+efficiency_limit = 0.5 #minimum acre-feet/year/acre required from a water saving change
 unconstrained_case = False #remove all constraints
 freeze_farm = True #keep "farm" managed veg as is
 factor_water = True #adjust water useage values so base water matches preset value
 preset_base_water = 73351
 truncate_steps = True #erase step changes if no water savings is acheived
 force = False #force changes
+revise_areas = False
 file_flag = ""
 if unconstrained_case: file_flag = file_flag + " NO_CONSTRAINTS"
 if not efficient_steps: file_flag = file_flag + " EFFICIENT_STEPS_OFF"
 if not freeze_farm: file_flag = file_flag + " FARM_FROZEN_OFF"
 if not factor_water: file_flag = file_flag + " H20_ADJUST_OFF"
 if force: file_flag = file_flag + " FORCED_CHANGES"
+if revise_areas: file_flag = file_flag + " REVISED_AREAS"
 
 # read data from original Master Project planning workbook
-mp_file, output_excel, wb = initialize_files("MP LAUNCHPAD PROJECT.xlsx")
+if revise_areas:
+    launch_file = "MP LAUNCHPAD revised areas.xlsx"
+else:
+    launch_file = "MP LAUNCHPAD.xlsx"
+
+mp_file, output_excel, wb = initialize_files(launch_file)
 
 design_dcms = mp_file.parse(sheet_name="Design HV & WD", header=2, \
     usecols="A,C").dropna(how='any')
 dcm_dict = pd.Series(design_dcms.Type.values, index=design_dcms.MP_id)
 
-dca_info = read_dca_info()
+dca_info, hab_adjust = read_dca_info()
+hab_adjust.iloc[np.isnan(hab_adjust)] = 1
+dca_info = dca_info.join(hab_adjust)
+
 dca_list = dca_info.index.tolist()
 dcm_list = [x for x in design_dcms['MP_id'] if not any([y in x for y in \
     ['(HW)', 'as-built']])]
@@ -581,9 +604,15 @@ for step in range(1, 6):
                 test_case.loc[best_change[3], i] = \
                         factors['design'].loc[best_change[7]][i]
                 col_name = i + "_ac" if i != 'water' else i + "_af/y"
-                test_case.loc[best_change[3], col_name] = \
-                        test_case.loc[best_change[3],'area_ac'].values[0] * \
-                        test_case.loc[best_change[3], i].values[0]
+                if i == 'water':
+                    test_case.loc[best_change[3], col_name] = \
+                            test_case.loc[best_change[3],'area_ac'].values[0] * \
+                            test_case.loc[best_change[3], i].values[0]
+                else:
+                    test_case.loc[best_change[3], col_name] = \
+                            test_case.loc[best_change[3],'area_ac'].values[0] * \
+                            test_case.loc[best_change[3], i].values[0] * \
+                            hab_adjust.loc[best_change[3]][0]
             test_total = test_case[['bw_ac', 'mw_ac', 'pl_ac', 'ms_ac', \
                     'md_ac', 'water_af/y']].sum()
             test_total.index = ['bw', 'mw', 'pl', 'ms', 'md', 'water']
@@ -675,6 +704,11 @@ area_sum = tracking.join(dca_info, on='dca')[['to', 'step', 'area_sqmi']]
 area_sum.replace(dcm_dict, inplace=True)
 area_sum = area_sum[1:]
 area_sum = area_sum.groupby(['to', 'step']).sum()
+
+zero_sum = dca_info.loc[:, ['area_sqmi', 'step0']]
+zero_sum.replace(dcm_dict, inplace=True)
+zero_sum = zero_sum.groupby('step0').sum()
+zero_sum.to_csv("~/Desktop/mp_area.csv")
 
 mi = pd.MultiIndex.from_product([set(dcm_dict), range(1, 6)], \
         names=['to', 'step'])
